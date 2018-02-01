@@ -1,0 +1,2253 @@
+//This program is a C# program written internally to help automate a contract writing procedure highly used within the company
+//The program uses the Microsoft Interop Library (Microsoft.Office.Interop) to take as input values from an excel form and writes a word document accordingly
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using Microsoft.Office.Tools.Ribbon;
+
+using Word = Microsoft.Office.Interop.Word;
+using Excel = Microsoft.Office.Interop.Excel;
+using Office = Microsoft.Office.Core;
+using Microsoft.Office.Tools.Excel;
+
+namespace test01
+{
+    public partial class Ribbon1
+    {
+        private void Ribbon1_Load(object sender, RibbonUIEventArgs e)
+        {
+
+        }
+
+        private void btnStart_Click(object sender, RibbonControlEventArgs e)
+        {
+
+            Excel.Worksheet xlWorksheet = Globals.ThisAddIn.Application.ActiveSheet;
+            System.Windows.Forms.MessageBox.Show("Starting Program...");
+
+            int[,] requireArray = listRequirements(xlWorksheet);
+           
+            object oMissing = System.Reflection.Missing.Value;
+            object oEndOfDoc = "\\endofdoc"; //endofdoc is a predefined bookmark
+
+            //Start Word and create a new document.
+            Word.Application oWord;
+            Word.Document oDoc;
+            oWord = new Word.Application();
+            oWord.Visible = true;
+            oDoc = oWord.Documents.Add(ref oMissing, ref oMissing, ref oMissing, ref oMissing);
+
+            Word.Paragraph oTitle;
+            object TitleRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            oTitle = oDoc.Content.Paragraphs.Add(ref TitleRng);
+            oTitle.Range.Text = "\nThis amendment " + xlWorksheet.Range["B" + 3.ToString()].Value2.ToString() + " is raised for the following:"; ;
+            oTitle.Range.Font.Bold = 0;
+            oTitle.Range.InsertParagraphAfter();
+
+            
+           for (int r = 0; r < requireArray.GetLength(0); r++)
+           {
+               if (r == 0)
+               {
+                   //this writes the header
+                   foreach (Word.Section section in oDoc.Sections)
+                   {
+                       Word.Range headerRange = section.Headers[Word.WdHeaderFooterIndex.wdHeaderFooterPrimary].Range; 
+                       Word.Table orderTable = oDoc.Tables.Add(headerRange, 1, 3, ref oMissing, ref oMissing);
+                       Word.Range hdrng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+
+                       if (xlWorksheet.Range["C" + 3.ToString()].Value2.ToString() == "PSPC") 
+                       {
+                           orderTable.Cell(1, 1).Range.Text = "Contract No. - N∞ du contrat \nENXXX-XXXXXX/XXX/XX \nClient Ref. No. - N∞ de rÈf. du client \nXXXXXXX";
+                           orderTable.Cell(1, 2).Range.Text = "Amd. No. - N∞ de la modif. \n" + xlWorksheet.Range["B" + 3.ToString()].Value2.ToString() + " \nFile No. - N∞ du dossier \nXXXXXXXX-XXXX";
+                           orderTable.Cell(1, 3).Range.Text = "Buyer ID - Id de l'acheteur \n050ee \nCCC No./N∞ CCC - FMS No./N∞ VME";
+                       }
+
+                       if (xlWorksheet.Range["C" + 3.ToString()].Value2.ToString() == "SSC")
+                       {
+                           orderTable.Cell(1, 1).Range.Text = "Contract No. - N∞ du contrat \nXXXXXXXX \nClient Ref. No. - N∞ de rÈf. du client \n";
+                           orderTable.Cell(1, 2).Range.Text = "Amd. No. - N∞ de la modif. \n" + xlWorksheet.Range["B" + 3.ToString()].Value2.ToString() + " \nFile No. - N∞ du dossier \nXXXXXXXXX";
+                           orderTable.Cell(1, 3).Range.Text = "Buyer ID - Id de l'acheteur \n \nCCC No./N∞ CCC - FMS No./N∞ VME";
+                       }
+
+                       orderTable.Columns[1].Width = 180;
+                       orderTable.Columns[2].Width = 180;
+                       orderTable.Columns[3].Width = 108;
+
+                       orderTable.Rows[1].Range.Font.Size = 8;
+                   }
+               }
+
+               frontpage(requireArray[r, 0], requireArray[r, 1], xlWorksheet, oDoc, requireArray.GetLength(0), r);
+           }
+          
+	   //This writes the body of the contract, all subsequent contact/table methods are called from the proceed method
+           for (int r = 0; r < requireArray.GetLength(0); r++)
+           {
+               proceed(requireArray[r, 0], requireArray[r, 1], xlWorksheet, oDoc);
+           }
+
+           Word.Paragraph oFinal;
+           object endRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+           oFinal = oDoc.Content.Paragraphs.Add(ref endRng);
+           oFinal.Range.Text = "ALL OTHER TERMS REMAIN THE SAME";
+           oFinal.Range.Font.Bold = 1;
+           oFinal.Format.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+           oFinal.Range.InsertParagraphAfter();
+           
+	  /*
+          //Close this form.
+          this.Close();
+          //oWord.Quit(false);
+
+          xlWorkbook.Close(false);
+          xlApp.Quit();
+          System.Runtime.InteropServices.Marshal.ReleaseComObject(xlWorksheet);
+          System.Runtime.InteropServices.Marshal.ReleaseComObject(xlWorkbook);
+          System.Runtime.InteropServices.Marshal.ReleaseComObject(xlApp);
+          */
+        }
+
+        private void proceed(int reqrow, int label, Microsoft.Office.Interop.Excel.Worksheet xlWorksheet, Microsoft.Office.Interop.Word.Document oDoc)
+        {
+
+            object oMissing = System.Reflection.Missing.Value;
+            object oEndOfDoc = "\\endofdoc"; /* endofdoc is a predefined bookmark */
+
+
+	    //countrows counts all the relevant rows in excel to prevent an infinite loop down the file
+	    //createsource is essential for the program to generalize over any amount of orders and any amount of tables, 
+	    //this was by far the most difficult algorithm to devise
+            int documentRows = countRows(xlWorksheet, reqrow);
+            int[,] source = createsource(xlWorksheet, documentRows, reqrow);
+
+            if (xlWorksheet.Range["B" + reqrow.ToString()].Value2.ToString() == "Add TUP") 
+            {
+                Word.Paragraph oParaT;
+                oParaT = oDoc.Content.Paragraphs.Add(ref oMissing);
+                oParaT.Range.Text = "" + label + ". " + xlWorksheet.Range["D" + reqrow.ToString()].Value2.ToString() + "\n"; 
+                oParaT.Range.Font.Bold = 1;
+                oParaT.Format.SpaceAfter = 0;
+                oParaT.Range.InsertParagraphAfter();
+
+                AddTrueUp(xlWorksheet, source, label, oDoc);
+            }
+
+            if (xlWorksheet.Range["B" + reqrow.ToString()].Value2.ToString() == "Process Orders")
+            {
+
+                Word.Paragraph oParaT;
+                oParaT = oDoc.Content.Paragraphs.Add(ref oMissing);
+                oParaT.Range.Text = "" + label + ". " + xlWorksheet.Range["D" + reqrow.ToString()].Value2.ToString() + "\n";
+                oParaT.Range.Font.Bold = 1;
+                oParaT.Format.SpaceAfter = 0;
+                oParaT.Range.InsertParagraphAfter();
+
+                processOrders(xlWorksheet, source, label, oDoc);
+            }
+
+            if (xlWorksheet.Range["B" + reqrow.ToString()].Value2.ToString() == "Credit Invoice")
+            {
+
+                Word.Paragraph oParaT;
+                oParaT = oDoc.Content.Paragraphs.Add(ref oMissing);
+                oParaT.Range.Text = "" + label + ". " + xlWorksheet.Range["D" + reqrow.ToString()].Value2.ToString() + "\n";
+                oParaT.Range.Font.Bold = 1;
+                oParaT.Format.SpaceAfter = 0;
+                oParaT.Range.InsertParagraphAfter();
+
+                creditInvoice(xlWorksheet, source, label, oDoc);
+            }
+
+            if (xlWorksheet.Range["B" + reqrow.ToString()].Value2.ToString() == "Process Rebill")
+            {
+
+                Word.Paragraph oParaT;
+                oParaT = oDoc.Content.Paragraphs.Add(ref oMissing);
+                oParaT.Range.Text = "" + label + ". " + xlWorksheet.Range["D" + reqrow.ToString()].Value2.ToString() + "\n";
+                oParaT.Range.Font.Bold = 1;
+                oParaT.Format.SpaceAfter = 0;
+                oParaT.Range.InsertParagraphAfter();
+
+                processRebill(xlWorksheet, source, label, oDoc);
+            }
+
+        }
+
+        private int[,] listRequirements(Microsoft.Office.Interop.Excel.Worksheet xlWorksheet)
+        {
+            
+            /*//Excel.Worksheet xlWorksheet = Globals.ThisAddIn.Application.ActiveSheet;
+            int cellvalue = 1;
+            var cell = xlWorksheet.Range["B" + cellvalue.ToString()];
+            string yo = "" + cell.Value2;
+            return yo;*/
+
+            //string blank = "";
+            int requireLength = 0;
+
+            int j;
+            for (j = 1; j < 1000; j++)
+            {
+                if (xlWorksheet.Range["A" + j.ToString()].Value2 == xlWorksheet.Range["B" + 1.ToString()].Value2)
+                {
+                    continue;
+                }
+
+                if (xlWorksheet.Range["A" + j.ToString()].Value2.ToString() == "END")
+                {
+                    break;
+                }
+
+                if (!(xlWorksheet.Range["A" + j.ToString()].Value2 == xlWorksheet.Range["B" + 1.ToString()].Value2))
+                {
+                    requireLength++;
+                    continue;
+                }
+
+            }
+            System.Windows.Forms.MessageBox.Show("This amendment contains " + requireLength.ToString() + " components, press OK if this is correct");
+            int i;
+            int y = 0;
+            int[,] requireArray = new int[requireLength, 2];
+            for (i = 1; i < 1000; i++)
+            {
+                if (xlWorksheet.Range["A" + i.ToString()].Value2 == xlWorksheet.Range["B" + 1.ToString()].Value2)
+                {
+                    continue;
+                }
+
+                if (xlWorksheet.Range["A" + i.ToString()].Value2.ToString() == "END")
+                {
+                    break;
+                }
+
+                if (xlWorksheet.Range["A" + i.ToString()].Value2 != xlWorksheet.Range["B" + 1.ToString()].Value2)
+                {
+                    requireArray[y, 0] = i;
+                    requireArray[y, 1] = int.Parse(xlWorksheet.Range["A" + i.ToString()].Value2.ToString());
+                    y++;
+                }
+            }
+
+            return requireArray;
+           
+        }
+
+        private int countRows(Microsoft.Office.Interop.Excel.Worksheet xlWorksheet, int reqrow)
+        {
+            int i;
+            string blank = "";
+            for (i = (reqrow + 4); i < 1000; i++)
+            {
+                if (xlWorksheet.get_Range("B" + i.ToString()).Text == blank)
+                {
+                    break;
+                }
+            }
+
+            return i - (reqrow + 4);
+        }
+
+        private int[,] createsource(Microsoft.Office.Interop.Excel.Worksheet xlWorksheet, int totalRows, int reqrow)
+        {
+
+            String subsection = "";
+            String subsection2 = "a";
+            int orders = 0;
+
+            //figures out how many different pages there are going to be
+            for (int n = reqrow + 4; n < totalRows + reqrow + 4; n++)
+            {
+                if (!(xlWorksheet.get_Range("C" + n.ToString()).Text == subsection))
+                {
+                    subsection = xlWorksheet.get_Range("C" + n.ToString()).Text;
+                    orders++;
+                }
+            }
+
+            int[,] source = new int[orders, 2];
+
+            //Need to figure this one out
+            int excelrow = reqrow + 4;
+            int i;
+
+
+            for (i = 0; i < orders; i++)
+            {
+                subsection2 = xlWorksheet.get_Range("C" + excelrow.ToString()).Text;
+                int j = 1;
+
+                if (excelrow == totalRows + 1)
+                {
+                    break;
+                }
+
+                if (!(xlWorksheet.get_Range("C" + (excelrow + 1).ToString()).Text == subsection2))
+                {
+                    source[i, 0] = excelrow;
+                    source[i, 1] = 1;
+                    excelrow++;
+                    continue;
+                }
+
+                if (xlWorksheet.get_Range("C" + (excelrow + 1).ToString()).Text == subsection2)
+                {
+                    for (j = 1; j < 10000; j++)
+                    {
+                        if (xlWorksheet.get_Range("C" + (excelrow + j).ToString()).Text == subsection2)
+                        {
+                            source[i, 0] = excelrow;
+                            continue;
+                        }
+                        if (!(xlWorksheet.get_Range("C" + (excelrow + j).ToString()).Text == subsection2))
+                        {
+                            excelrow = excelrow + j;
+                            source[i, 1] = j;
+                            break;
+                        }
+                    }
+                }
+
+
+
+            }
+
+            return source;
+
+        }
+
+        private void frontpage(int reqrow, int label, Microsoft.Office.Interop.Excel.Worksheet xlWorksheet, Microsoft.Office.Interop.Word.Document oDoc, int summaryLength, int r)
+        {
+            object oMissing = System.Reflection.Missing.Value;
+            object oEndOfDoc = "\\endofdoc"; /* \endofdoc is a predefined bookmark */
+
+            int documentRows = countRows(xlWorksheet, reqrow);
+            int[,] source = createsource(xlWorksheet, documentRows, reqrow);
+
+
+            Word.Paragraph oParaT;
+            oParaT = oDoc.Content.Paragraphs.Add(ref oMissing);
+            oParaT.Range.Text = "\n" + label + ". " + xlWorksheet.get_Range("D" + reqrow.ToString()).Text;
+            oParaT.Range.Font.Bold = 1;
+            oParaT.Format.SpaceAfter = 0;
+            oParaT.Range.InsertParagraphAfter();
+
+            if (!(reqrow == 5))
+            {
+                for (int frntpg = 0; frntpg < source.GetLength(0); frntpg++)
+                {
+
+                    if (frntpg == 0)
+                    {
+
+                        if (xlWorksheet.get_Range("B" + reqrow.ToString()).Text == "Credit Invoice")
+                        {
+                            Word.Paragraph oPara1;
+                            oPara1 = oDoc.Content.Paragraphs.Add(ref oMissing);
+                            oPara1.Range.Text = "" + xlWorksheet.get_Range("C" + source[frntpg, 0].ToString()).Text + ". " + xlWorksheet.get_Range("X" + source[frntpg, 0].ToString()).Text + " Schedule " + xlWorksheet.get_Range("G" + source[frntpg, 0].ToString()).Text + "." + xlWorksheet.get_Range("H" + source[frntpg, 0].ToString()).Text + " to Appendix " + xlWorksheet.get_Range("I" + source[frntpg, 0].ToString()).Text + ", Schedule " + xlWorksheet.get_Range("G" + source[frntpg, 0].ToString()).Text + " - " + xlWorksheet.get_Range("W" + source[frntpg, 0].ToString()).Text + " (RAS# " + xlWorksheet.get_Range("M" + source[frntpg, 0].ToString()).Text + ")";
+                            oPara1.Range.Font.Bold = 1;
+                            oPara1.Range.Paragraphs.TabIndent(1);
+                            oPara1.Format.SpaceAfter = 0;    //24 pt spacing after paragraph.
+                            oPara1.Range.InsertParagraphAfter();
+
+                            if (frntpg == source.GetLength(0) - 1)
+                            {
+                                oPara1.Range.Paragraphs.TabIndent(-1);
+                            }
+                        }
+
+                        else
+                        {
+                            Word.Paragraph oPara1;
+                            oPara1 = oDoc.Content.Paragraphs.Add(ref oMissing);
+                            oPara1.Range.Text = "" + xlWorksheet.get_Range("C" + source[frntpg, 0].ToString()).Text + ". Schedule " + xlWorksheet.get_Range("G" + source[frntpg, 0].ToString()).Text + "." + xlWorksheet.get_Range("H" + source[frntpg, 0].ToString()).Text + " to Appendix " + xlWorksheet.get_Range("I" + source[frntpg, 0].ToString()).Text + ", Schedule " + xlWorksheet.get_Range("G" + source[frntpg, 0].ToString()).Text + " - " + xlWorksheet.get_Range("W" + source[frntpg, 0].ToString()).Text + " (RAS# " + xlWorksheet.get_Range("M" + source[frntpg, 0].ToString()).Text + ")";
+                            oPara1.Range.Font.Bold = 1;
+                            oPara1.Range.Paragraphs.TabIndent(1);
+                            oPara1.Format.SpaceAfter = 0;    //24 pt spacing after paragraph.
+                            oPara1.Range.InsertParagraphAfter();
+
+                            if (frntpg == source.GetLength(0) - 1)
+                            {
+                                oPara1.Range.Paragraphs.TabIndent(-1);
+                            }
+                        }
+
+
+                    }
+
+                    else
+                    {
+                        Word.Paragraph oPara1;
+                        oPara1 = oDoc.Content.Paragraphs.Add(ref oMissing);
+                        oPara1.Range.Text = "" + xlWorksheet.get_Range("C" + source[frntpg, 0].ToString()).Text + ". Schedule " + xlWorksheet.get_Range("G" + source[frntpg, 0].ToString()).Text + "." + xlWorksheet.get_Range("H" + source[frntpg, 0].ToString()).Text + " to Appendix " + xlWorksheet.get_Range("I" + source[frntpg, 0].ToString()).Text + ", Schedule " + xlWorksheet.get_Range("G" + source[frntpg, 0].ToString()).Text + " - " + xlWorksheet.get_Range("W" + source[frntpg, 0].ToString()).Text + " (RAS# " + xlWorksheet.get_Range("M" + source[frntpg, 0].ToString()).Text + ")";
+                        oPara1.Range.Font.Bold = 1;
+                        oPara1.Format.SpaceAfter = 0;    //24 pt spacing after paragraph.
+                        oPara1.Range.InsertParagraphAfter();
+
+                        if (frntpg == source.GetLength(0) - 1)
+                        {
+                            oPara1.Range.Paragraphs.TabIndent(-1);
+                        }
+                    }
+
+
+
+                }
+
+            }
+
+            if (r == summaryLength - 1)
+            {
+                oDoc.Words.Last.InsertBreak(Word.WdBreakType.wdPageBreak);
+            }
+
+
+        }
+
+        private void AddTrueUp(Microsoft.Office.Interop.Excel.Worksheet xlWorksheet, int[,] source, int label, Microsoft.Office.Interop.Word.Document oDoc)
+        {
+
+            //Write each order table by calling the various methods
+            for (int s1 = 0; s1 < source.GetLength(0); s1++)
+            {
+
+                if (xlWorksheet.get_Range("D" + source[s1, 0].ToString()).Text == "SA/L&SA")
+                {
+                    lnsaTable(xlWorksheet, oDoc, source, s1);
+                }
+
+                if (xlWorksheet.get_Range("D" + source[s1, 0].ToString()).Text == "Subscription")
+                {
+                    subscriptionTable(xlWorksheet, oDoc, source, s1);
+                }
+
+            }
+
+
+        }
+
+        private void creditInvoice(Microsoft.Office.Interop.Excel.Worksheet xlWorksheet, int[,] source, int label, Microsoft.Office.Interop.Word.Document oDoc)
+        {
+            for (int s1 = 0; s1 < source.GetLength(0); s1++)
+            {
+
+                if (xlWorksheet.get_Range("D" + source[s1, 0].ToString()).Text == "SA/L&SA")
+                {
+                    creditlnsaTable(xlWorksheet, oDoc, source, s1);
+                }
+
+                if (xlWorksheet.get_Range("D" + source[s1, 0].ToString()).Text == "Subscription")
+                {
+                    creditSubscriptionTable(xlWorksheet, oDoc, source, s1);
+                }
+
+            }
+        }
+
+        private void processRebill(Microsoft.Office.Interop.Excel.Worksheet xlWorksheet, int[,] source, int label, Microsoft.Office.Interop.Word.Document oDoc)
+        {
+            for (int s1 = 0; s1 < source.GetLength(0); s1++)
+            {
+
+                if (xlWorksheet.get_Range("D" + source[s1, 0].ToString()).Text == "SA/L&SA")
+                {
+                    rebilllnsaTable(xlWorksheet, oDoc, source, s1);
+                }
+
+                if (xlWorksheet.get_Range("D" + source[s1, 0].ToString()).Text == "Subscription")
+                {
+                    rebillSubscriptionTable(xlWorksheet, oDoc, source, s1);
+                }
+
+            }
+        }
+
+        private void processOrders(Microsoft.Office.Interop.Excel.Worksheet xlWorksheet, int[,] source, int label, Microsoft.Office.Interop.Word.Document oDoc)
+        {
+
+            for (int s1 = 0; s1 < source.GetLength(0); s1++)
+            {
+
+                if (xlWorksheet.get_Range("D" + source[s1, 0].ToString()).Text == "SA/L&SA")
+                {
+                    ProcessOrderlnsaTable(xlWorksheet, oDoc, source, s1);
+                }
+
+                if (xlWorksheet.get_Range("D" + source[s1, 0].ToString()).Text == "Subscription")
+                {
+                    ProcessOrdersubscriptionTable(xlWorksheet, oDoc, source, s1);
+                }
+
+            }
+
+        }
+
+
+        private void lnsaTable(Microsoft.Office.Interop.Excel.Worksheet xlWorksheet, Microsoft.Office.Interop.Word.Document oDoc, int[,] source, int s1)
+        {
+
+            object oMissing = System.Reflection.Missing.Value;
+            object oEndOfDoc = "\\endofdoc"; /* \endofdoc is a predefined bookmark */
+
+            //Insert a paragraph at the beginning of the document - fixed
+            Word.Paragraph oPara1;
+            oPara1 = oDoc.Content.Paragraphs.Add(ref oMissing);
+            oPara1.Range.Text = "" + xlWorksheet.get_Range("B" + source[s1, 0].ToString()).Text + xlWorksheet.get_Range("C" + source[s1, 0].ToString()).Text + ". " + xlWorksheet.get_Range("E" + source[s1, 0].ToString()).Text; //"3d Health Canada";
+            oPara1.Range.Paragraphs.TabIndent(-1);
+            oPara1.Range.Font.Bold = 1;
+            oPara1.Format.SpaceAfter = 8;    //24 pt spacing after paragraph.
+            oPara1.Range.InsertParagraphAfter();
+
+            //Insert a paragraph at the end of the document - fixed
+            Word.Paragraph oPara2;
+            object oRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            oPara2 = oDoc.Content.Paragraphs.Add(ref oRng);
+            oPara2.Range.Text = "Insert the Following Schedule " + xlWorksheet.get_Range("G" + source[s1, 0].ToString()).Text + "." + xlWorksheet.get_Range("H" + source[s1, 0].ToString()).Text + " at Appendix " + xlWorksheet.get_Range("I" + source[s1, 0].ToString()).Text + ", Schedule " + xlWorksheet.get_Range("G" + source[s1, 0].ToString()).Text;// + " - Part 2";
+            oPara2.Range.Font.Bold = 0;
+            oPara2.Format.SpaceAfter = 8;
+            oPara2.Range.InsertParagraphAfter();
+
+            //Insert another paragraph.
+            Word.Paragraph oPara3;
+            oRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            oPara3 = oDoc.Content.Paragraphs.Add(ref oRng);
+            oPara3.Range.Text = "Schedule " + xlWorksheet.get_Range("G" + source[s1, 0].ToString()).Text + "." + xlWorksheet.get_Range("H" + source[s1, 0].ToString()).Text + " - TRUE UP Enrollment# " + xlWorksheet.get_Range("F" + source[s1, 0].ToString()).Text;
+            oPara2.Range.Font.Bold = 1;
+            oPara3.Format.SpaceAfter = 6;
+            oPara3.Range.InsertParagraphAfter();
+
+            //The table 
+            Word.Table orderTable;
+            Word.Range hdrng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            orderTable = oDoc.Tables.Add(hdrng, 5 + source[s1, 1], 6, ref oMissing, ref oMissing);
+            orderTable.Borders.InsideLineStyle = Word.WdLineStyle.wdLineStyleSingle;
+            orderTable.Borders.OutsideLineStyle = Word.WdLineStyle.wdLineStyleSingle;
+            orderTable.Range.ParagraphFormat.SpaceAfter = 0;
+
+            //Set column widths
+            orderTable.Columns[1].Width = 130;
+            orderTable.Columns[2].Width = 65;
+            orderTable.Columns[3].Width = 65;
+            orderTable.Columns[4].Width = 65;
+            orderTable.Columns[5].Width = 65;
+            orderTable.Columns[6].Width = 78;
+
+            // Table Contents
+            orderTable.Cell(1, 1).Range.Text = "Year 4 - April 1, 2017 to March 31, 2018 - RAS# " + xlWorksheet.get_Range("M" + source[s1, 0].ToString()).Text + " TU" + xlWorksheet.get_Range("H" + source[s1, 0].ToString()).Text + " YR4";
+            orderTable.Cell(2, 1).Range.Text = "Product Description";
+            orderTable.Cell(2, 2).Range.Text = "Part Number";
+            orderTable.Cell(2, 3).Range.Text = "Net Unit Price (CAD)";
+            orderTable.Cell(2, 4).Range.Text = "License Quantity";
+            orderTable.Cell(2, 5).Range.Text = "Usage Country";
+            orderTable.Cell(2, 6).Range.Text = "Extended Amount (CAD)";
+
+            //this loop computes the subtotal, tax, and TOTAL Year 4 Payment
+            double sub = 0.0;
+            double HST = 0.0;
+
+            for (int sift = 1; sift < (source[s1, 1] + 1); sift++)
+            {
+                string stringsub = xlWorksheet.get_Range("T" + (source[s1, 0] + sift - 1).ToString()).Text;
+                string HSTsub = xlWorksheet.get_Range("V" + (source[s1, 0] + sift - 1).ToString()).Text;
+                sub = sub + Convert.ToDouble(stringsub);
+                HST = HST + Convert.ToDouble(HSTsub);
+
+            }
+
+            double TOTAL = sub + HST;
+
+            //inputs the above caluclated values into the last 3 rows of the table accordingly
+            for (int i = 3; i < 6 + source[s1, 1]; i++)
+            {
+                if (i > 2 + source[s1, 1])
+                {
+
+                    if (i == (3 + source[s1, 1]))
+                    {
+                        orderTable.Cell(i, 1).Range.Text = "Sub Total";
+                        orderTable.Cell(i, 6).Range.Text = "$" + String.Format("{0:n}", sub);
+                        orderTable.Cell(i, 6).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+                    }
+
+                    if (i == (4 + source[s1, 1]))
+                    {
+                        orderTable.Cell(i, 1).Range.Text = "Tax Based on original enrollment ship to " + "(" + xlWorksheet.get_Range("U" + (-1 + source[s1, 0] + source[s1, 1]).ToString()).Text + ")";
+                        orderTable.Cell(i, 6).Range.Text = "$" + String.Format("{0:n}", HST);
+                        orderTable.Cell(i, 6).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+                    }
+
+                    if (i == (5 + source[s1, 1]))
+                    {
+                        orderTable.Cell(i, 1).Range.Text = "TOTAL Year 4 Payment";
+                        orderTable.Cell(i, 6).Range.Text = "$" + String.Format("{0:n}", TOTAL);
+                        orderTable.Cell(i, 6).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+                    }
+
+                }
+
+                else
+                {
+                    orderTable.Cell(i, 1).Range.Text = xlWorksheet.get_Range("N" + (source[s1, 0] + (i - 3)).ToString()).Text; //product description
+                    orderTable.Cell(i, 2).Range.Text = xlWorksheet.get_Range("O" + (source[s1, 0] + (i - 3)).ToString()).Text; //part number
+                    orderTable.Cell(i, 3).Range.Text = "$" + String.Format("{0:n}", Convert.ToDouble(xlWorksheet.get_Range("Q" + (source[s1, 0] + (i - 3)).ToString()).Text)); //net unit price
+                    orderTable.Cell(i, 4).Range.Text = xlWorksheet.get_Range("R" + (source[s1, 0] + (i - 3)).ToString()).Text; //License Quantity
+                    orderTable.Cell(i, 5).Range.Text = xlWorksheet.get_Range("S" + (source[s1, 0] + (i - 3)).ToString()).Text; //Usage Country
+                    orderTable.Cell(i, 6).Range.Text = "$" + String.Format("{0:n}", Convert.ToDouble(xlWorksheet.get_Range("T" + (source[s1, 0] + (i - 3)).ToString()).Text)); //Extended Amount
+
+                    orderTable.Rows[i].Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+                }
+
+
+            }
+
+            orderTable.Rows[2].Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+
+            //Merge the cells we want to merge
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Cell(1, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Cell(source[s1, 1] + 3, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Cell(source[s1, 1] + 4, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Cell(source[s1, 1] + 5, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+
+            for (int r = 3; r < 5 + source[s1, 1]; r++)
+            {
+                orderTable.Rows[r].Range.Font.Bold = 0;
+            }
+
+            //Insert another paragraph.
+            Word.Paragraph oPara4;
+            oRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            oPara4 = oDoc.Content.Paragraphs.Add(ref oRng);
+            oPara4.Range.Text = "";
+            oPara4.Range.Font.Bold = 1;
+            oPara4.Format.SpaceAfter = 0;
+            oPara4.Range.InsertParagraphAfter();
+
+            //Subtotal part
+            Word.Table subTable;
+            Word.Range sbdRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            subTable = oDoc.Tables.Add(sbdRng, 1, 2, ref oMissing, ref oMissing);
+            subTable.Columns[1].Width = 390;
+            subTable.Columns[2].Width = 78;
+            subTable.Borders.InsideLineStyle = Word.WdLineStyle.wdLineStyleSingle;
+            subTable.Borders.OutsideLineStyle = Word.WdLineStyle.wdLineStyleSingle;
+
+            subTable.Cell(1, 1).Range.Text = "Total Cost of True Up " + xlWorksheet.get_Range("H" + (source[s1, 0]).ToString()).Text + " during Contract Option Year One";
+            subTable.Cell(1, 2).Range.Text = "$" + String.Format("{0:n}", TOTAL);
+            subTable.Cell(1, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+            subTable.Cell(1, 2).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+
+
+            subTable.Range.ParagraphFormat.SpaceAfter = 6;
+            oDoc.Words.Last.InsertBreak(Word.WdBreakType.wdPageBreak);
+
+        }
+
+        private void subscriptionTable(Microsoft.Office.Interop.Excel.Worksheet xlWorksheet, Microsoft.Office.Interop.Word.Document oDoc, int[,] source, int s1)
+        {
+
+            object oMissing = System.Reflection.Missing.Value;
+            object oEndOfDoc = "\\endofdoc"; /* \endofdoc is a predefined bookmark */
+
+            //Insert a paragraph at the beginning of the document - fixed
+            Word.Paragraph oPara1;
+            oPara1 = oDoc.Content.Paragraphs.Add(ref oMissing);
+            oPara1.Range.Text = "" + xlWorksheet.get_Range("B" + source[s1, 0].ToString()).Text + xlWorksheet.get_Range("C" + source[s1, 0].ToString()).Text + ". " + xlWorksheet.get_Range("E" + source[s1, 0].ToString()).Text; //"3d Health Canada";
+            oPara1.Range.Font.Bold = 1;
+            oPara1.Format.SpaceAfter = 8;    //24 pt spacing after paragraph.
+            oPara1.Range.InsertParagraphAfter();
+
+            //Insert a paragraph at the end of the document - fixed
+            Word.Paragraph oPara2;
+            object oRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            oPara2 = oDoc.Content.Paragraphs.Add(ref oRng);
+            oPara2.Range.Text = "Insert the Following Schedule " + xlWorksheet.get_Range("G" + source[s1, 0].ToString()).Text + "." + xlWorksheet.get_Range("H" + source[s1, 0].ToString()).Text + " at Appendix " + xlWorksheet.get_Range("I" + source[s1, 0].ToString()).Text + ", Schedule " + xlWorksheet.get_Range("G" + source[s1, 0].ToString()).Text;// + " - Part 2";
+            oPara2.Range.Font.Bold = 0;
+            oPara2.Format.SpaceAfter = 8;
+            oPara2.Range.InsertParagraphAfter();
+
+            //Insert another paragraph.
+            Word.Paragraph oPara3;
+            oRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            oPara3 = oDoc.Content.Paragraphs.Add(ref oRng);
+            oPara3.Range.Text = "Schedule " + xlWorksheet.get_Range("G" + source[s1, 0].ToString()).Text + "." + xlWorksheet.get_Range("H" + source[s1, 0].ToString()).Text + " - TRUE UP Enrollment# " + xlWorksheet.get_Range("F" + source[s1, 0].ToString()).Text;
+            oPara2.Range.Font.Bold = 1;
+            oPara3.Format.SpaceAfter = 6;
+            oPara3.Range.InsertParagraphAfter();
+
+            //The table 
+            Word.Table orderTable;
+            Word.Range hdrng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            orderTable = oDoc.Tables.Add(hdrng, 5 + source[s1, 1], 10, ref oMissing, ref oMissing);
+            orderTable.Borders.InsideLineStyle = Word.WdLineStyle.wdLineStyleSingle;
+            orderTable.Borders.OutsideLineStyle = Word.WdLineStyle.wdLineStyleSingle;
+            orderTable.Range.ParagraphFormat.SpaceAfter = 0;
+
+            //Set column widths
+            orderTable.Columns[1].Width = 80;
+            orderTable.Columns[2].Width = 47;
+            orderTable.Columns[3].Width = 47;
+            orderTable.Columns[4].Width = 47;
+            orderTable.Columns[5].Width = 41;
+            orderTable.Columns[6].Width = 41;
+            orderTable.Columns[7].Width = 43;
+            orderTable.Columns[8].Width = 41;
+            orderTable.Columns[9].Width = 39;
+            orderTable.Columns[10].Width = 53;
+
+            // Table Contents
+            orderTable.Cell(1, 1).Range.Text = "Pricing & Usage Year 4, PO: RAS# " + xlWorksheet.get_Range("M" + source[s1, 0].ToString()).Text + " YR4";
+            orderTable.Cell(2, 1).Range.Text = "Product Description";
+            orderTable.Cell(2, 2).Range.Text = "Part Number";
+            orderTable.Cell(2, 3).Range.Text = "Usage Indicator";
+            orderTable.Cell(2, 4).Range.Text = "Usage Start Date";
+            orderTable.Cell(2, 5).Range.Text = "Unit of Measure";
+            orderTable.Cell(2, 6).Range.Text = "Unit Quantity";
+            orderTable.Cell(2, 7).Range.Text = "Net Unit Price (CAD)";
+            orderTable.Cell(2, 8).Range.Text = "License Quantity";
+            orderTable.Cell(2, 9).Range.Text = "Usage Country";
+            orderTable.Cell(2, 10).Range.Text = "Extended Amount (CAD)";
+
+            //this loop computes the subtotal, tax, and TOTAL Year 4 Payment
+            double sub = 0.0;
+            double HST = 0.0;
+
+            for (int sift = 1; sift < (source[s1, 1] + 1); sift++)
+            {
+                string stringsub = xlWorksheet.get_Range("T" + (source[s1, 0] + sift - 1).ToString()).Text;
+                string HSTsub = xlWorksheet.get_Range("V" + (source[s1, 0] + sift - 1).ToString()).Text;
+                sub = sub + Convert.ToDouble(stringsub);
+                HST = HST + Convert.ToDouble(HSTsub);
+
+            }
+
+            double TOTAL = sub + HST;
+
+            //inputs the above caluclated values into the last 3 rows of the table accordingly
+            for (int i = 3; i < 6 + source[s1, 1]; i++)
+            {
+                if (i > 2 + source[s1, 1])
+                {
+
+                    if (i == (3 + source[s1, 1]))
+                    {
+                        orderTable.Cell(i, 1).Range.Text = "Sub Total";
+                        orderTable.Cell(i, 10).Range.Text = "$" + String.Format("{0:n}", sub);
+                        orderTable.Cell(i, 10).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+                    }
+
+                    if (i == (4 + source[s1, 1]))
+                    {
+                        orderTable.Cell(i, 1).Range.Text = "Tax Based on original enrollment ship to " + "(" + xlWorksheet.get_Range("U" + (-1 + source[s1, 0] + source[s1, 1]).ToString()).Text + ")";
+                        orderTable.Cell(i, 10).Range.Text = "$" + String.Format("{0:n}", HST);
+                        orderTable.Cell(i, 10).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+                    }
+
+                    if (i == (5 + source[s1, 1]))
+                    {
+                        orderTable.Cell(i, 1).Range.Text = "TOTAL Year 4 Payment";
+                        orderTable.Cell(i, 10).Range.Text = "$" + String.Format("{0:n}", TOTAL);
+                        orderTable.Cell(i, 10).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+                    }
+
+                }
+
+                else
+                {
+                    orderTable.Cell(i, 1).Range.Text = xlWorksheet.get_Range("N" + (source[s1, 0] + (i - 3)).ToString()).Text; //product description
+                    orderTable.Cell(i, 2).Range.Text = xlWorksheet.get_Range("O" + (source[s1, 0] + (i - 3)).ToString()).Text; //part number
+                    orderTable.Cell(i, 3).Range.Text = xlWorksheet.get_Range("K" + (source[s1, 0] + (i - 3)).ToString()).Text; //Usage Indicator
+                    orderTable.Cell(i, 4).Range.Text = xlWorksheet.get_Range("J" + (source[s1, 0] + (i - 3)).ToString()).Text; //Usage Start Date
+                    orderTable.Cell(i, 5).Range.Text = xlWorksheet.get_Range("L" + (source[s1, 0] + (i - 3)).ToString()).Text; //Unit of Measure
+                    orderTable.Cell(i, 6).Range.Text = xlWorksheet.get_Range("P" + (source[s1, 0] + (i - 3)).ToString()).Text; //Unit Quantity
+                    orderTable.Cell(i, 7).Range.Text = "$" + String.Format("{0:n}", Convert.ToDouble(xlWorksheet.get_Range("Q" + (source[s1, 0] + (i - 3)).ToString()).Text)); //net unit price
+                    orderTable.Cell(i, 8).Range.Text = xlWorksheet.get_Range("R" + (source[s1, 0] + (i - 3)).ToString()).Text; //License Quantity
+                    orderTable.Cell(i, 9).Range.Text = xlWorksheet.get_Range("S" + (source[s1, 0] + (i - 3)).ToString()).Text; //Usage Country
+                    orderTable.Cell(i, 10).Range.Text = "$" + String.Format("{0:n}", Convert.ToDouble(xlWorksheet.get_Range("T" + (source[s1, 0] + (i - 3)).ToString()).Text)); //Extended Amount
+
+                    orderTable.Rows[i].Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+                }
+
+
+            }
+
+            orderTable.Rows[2].Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+
+            //Merge the cells we want to merge
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Cell(1, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+
+            orderTable.Rows[2].Range.Font.Size = 8;
+
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Cell(source[s1, 1] + 3, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Cell(source[s1, 1] + 4, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Cell(source[s1, 1] + 5, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+            orderTable.Rows[(source[s1, 1] + 5)].Range.Font.Size = 9;
+
+            for (int r = 3; r < 5 + source[s1, 1]; r++)
+            {
+                orderTable.Rows[r].Range.Font.Bold = 0;
+
+                if (r < source[s1, 1] + 3)
+                {
+                    orderTable.Rows[r].Range.Font.Size = 8;
+                }
+                else
+                {
+                    orderTable.Rows[r].Range.Font.Size = 9;
+                }
+            }
+
+            //Insert another paragraph.
+            Word.Paragraph oPara4;
+            oRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            oPara4 = oDoc.Content.Paragraphs.Add(ref oRng);
+            oPara4.Range.Text = "";
+            oPara4.Range.Font.Bold = 1;
+            oPara4.Format.SpaceAfter = 0;
+            oPara4.Range.InsertParagraphAfter();
+
+            //Subtotal part
+            Word.Table subTable;
+            Word.Range sbdRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            subTable = oDoc.Tables.Add(sbdRng, 1, 2, ref oMissing, ref oMissing);
+            subTable.Columns[1].Width = 426;
+            subTable.Columns[2].Width = 53;
+            subTable.Borders.InsideLineStyle = Word.WdLineStyle.wdLineStyleSingle;
+            subTable.Borders.OutsideLineStyle = Word.WdLineStyle.wdLineStyleSingle;
+
+            subTable.Cell(1, 1).Range.Text = "Total Cost during Contract Option Year One";
+            subTable.Cell(1, 2).Range.Text = "$" + String.Format("{0:n}", TOTAL);
+            subTable.Rows[1].Range.Font.Size = 9;
+            subTable.Cell(1, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+            subTable.Cell(1, 2).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+            subTable.Range.ParagraphFormat.SpaceAfter = 6;
+            oDoc.Words.Last.InsertBreak(Word.WdBreakType.wdPageBreak);
+
+        }
+
+        private void ProcessOrderlnsaTable(Microsoft.Office.Interop.Excel.Worksheet xlWorksheet, Microsoft.Office.Interop.Word.Document oDoc, int[,] source, int s1)
+        {
+
+            object oMissing = System.Reflection.Missing.Value;
+            object oEndOfDoc = "\\endofdoc"; /* \endofdoc is a predefined bookmark */
+
+            //Insert a paragraph at the beginning of the document - fixed
+            Word.Paragraph oPara1;
+            oPara1 = oDoc.Content.Paragraphs.Add(ref oMissing);
+            oPara1.Range.Text = "" + xlWorksheet.get_Range("B" + source[s1, 0].ToString()).Text + xlWorksheet.get_Range("C" + source[s1, 0].ToString()).Text + ". " + xlWorksheet.get_Range("E" + source[s1, 0].ToString()).Text; //"3d Health Canada";
+            oPara1.Range.Paragraphs.TabIndent(-1);
+            oPara1.Range.Font.Bold = 1;
+            oPara1.Format.SpaceAfter = 8;    //24 pt spacing after paragraph.
+            oPara1.Range.InsertParagraphAfter();
+
+            //Yellow Highlighted portion reinstate SA
+            Word.Paragraph ReinstateSA;
+            object oReinRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            ReinstateSA = oDoc.Content.Paragraphs.Add(ref oReinRng);
+            ReinstateSA.Range.Text = "Reinstate SA on line items missed on Renewal under Amendment " + xlWorksheet.get_Range("X" + source[s1, 0].ToString()).Text;//Reainstate SA missed on AMD xx
+            ReinstateSA.Range.HighlightColorIndex = Word.WdColorIndex.wdYellow;
+            ReinstateSA.Range.Font.Bold = 0;
+            ReinstateSA.Format.SpaceAfter = 8;
+            ReinstateSA.Range.InsertParagraphAfter();
+
+            //Insert a paragraph at the end of the document - fixed
+            Word.Paragraph oPara2;
+            object oRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            oPara2 = oDoc.Content.Paragraphs.Add(ref oRng);
+            oPara2.Range.Text = "Insert the Following Schedule " + xlWorksheet.get_Range("G" + source[s1, 0].ToString()).Text + "." + xlWorksheet.get_Range("H" + source[s1, 0].ToString()).Text + " at Appendix " + xlWorksheet.get_Range("I" + source[s1, 0].ToString()).Text + ", Schedule " + xlWorksheet.get_Range("G" + source[s1, 0].ToString()).Text;// + " - Part 2";
+            oPara2.Range.HighlightColorIndex = Word.WdColorIndex.wdNoHighlight;
+            oPara2.Range.Font.Bold = 0;
+            oPara2.Format.SpaceAfter = 8;
+            oPara2.Range.InsertParagraphAfter();
+
+            //Insert another paragraph.
+            Word.Paragraph oPara3;
+            oRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            oPara3 = oDoc.Content.Paragraphs.Add(ref oRng);
+            oPara3.Range.Text = "Schedule " + xlWorksheet.get_Range("G" + source[s1, 0].ToString()).Text + "." + xlWorksheet.get_Range("H" + source[s1, 0].ToString()).Text + " - TRUE UP Enrollment# " + xlWorksheet.get_Range("F" + source[s1, 0].ToString()).Text;
+            oPara2.Range.Font.Bold = 1;
+            oPara3.Format.SpaceAfter = 6;
+            oPara3.Range.InsertParagraphAfter();
+
+            //The table 
+            Word.Table orderTable;
+            Word.Range hdrng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            orderTable = oDoc.Tables.Add(hdrng, 5 + source[s1, 1], 6, ref oMissing, ref oMissing);
+            orderTable.Borders.InsideLineStyle = Word.WdLineStyle.wdLineStyleSingle;
+            orderTable.Borders.OutsideLineStyle = Word.WdLineStyle.wdLineStyleSingle;
+            orderTable.Range.ParagraphFormat.SpaceAfter = 0;
+
+            //Set column widths
+            orderTable.Columns[1].Width = 130;
+            orderTable.Columns[2].Width = 65;
+            orderTable.Columns[3].Width = 65;
+            orderTable.Columns[4].Width = 65;
+            orderTable.Columns[5].Width = 65;
+            orderTable.Columns[6].Width = 78;
+
+            // Table Contents
+            orderTable.Cell(1, 1).Range.Text = "Year 4 - April 1, 2017 to March 31, 2018 - RAS# " + xlWorksheet.get_Range("M" + source[s1, 0].ToString()).Text + " TU" + xlWorksheet.get_Range("H" + source[s1, 0].ToString()).Text + " YR4";
+            orderTable.Cell(2, 1).Range.Text = "Product Description";
+            orderTable.Cell(2, 2).Range.Text = "Part Number";
+            orderTable.Cell(2, 3).Range.Text = "Net Unit Price (CAD)";
+            orderTable.Cell(2, 4).Range.Text = "License Quantity";
+            orderTable.Cell(2, 5).Range.Text = "Usage Country";
+            orderTable.Cell(2, 6).Range.Text = "Extended Amount (CAD)";
+
+            //this loop computes the subtotal, tax, and TOTAL Year 4 Payment
+            double sub = 0.0;
+            double HST = 0.0;
+
+            for (int sift = 1; sift < (source[s1, 1] + 1); sift++)
+            {
+                string stringsub = xlWorksheet.get_Range("T" + (source[s1, 0] + sift - 1).ToString()).Text;
+                string HSTsub = xlWorksheet.get_Range("V" + (source[s1, 0] + sift - 1).ToString()).Text;
+                sub = sub + Convert.ToDouble(stringsub);
+                HST = HST + Convert.ToDouble(HSTsub);
+
+            }
+
+            double TOTAL = sub + HST;
+
+            //inputs the above caluclated values into the last 3 rows of the table accordingly
+            for (int i = 3; i < 6 + source[s1, 1]; i++)
+            {
+                if (i > 2 + source[s1, 1])
+                {
+
+                    if (i == (3 + source[s1, 1]))
+                    {
+                        orderTable.Cell(i, 1).Range.Text = "Sub Total";
+                        orderTable.Cell(i, 6).Range.Text = "$" + String.Format("{0:n}", sub);
+                        orderTable.Cell(i, 6).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+                    }
+
+                    if (i == (4 + source[s1, 1]))
+                    {
+                        orderTable.Cell(i, 1).Range.Text = "Tax Based on original enrollment ship to " + "(" + xlWorksheet.get_Range("U" + (-1 + source[s1, 0] + source[s1, 1]).ToString()).Text + ")";
+                        orderTable.Cell(i, 6).Range.Text = "$" + String.Format("{0:n}", HST);
+                        orderTable.Cell(i, 6).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+                    }
+
+                    if (i == (5 + source[s1, 1]))
+                    {
+                        orderTable.Cell(i, 1).Range.Text = "TOTAL Year 4 Payment";
+                        orderTable.Cell(i, 6).Range.Text = "$" + String.Format("{0:n}", TOTAL);
+                        orderTable.Cell(i, 6).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+                    }
+
+                }
+
+                else
+                {
+                    orderTable.Cell(i, 1).Range.Text = xlWorksheet.get_Range("N" + (source[s1, 0] + (i - 3)).ToString()).Text; //product description
+                    orderTable.Cell(i, 2).Range.Text = xlWorksheet.get_Range("O" + (source[s1, 0] + (i - 3)).ToString()).Text; //part number
+                    orderTable.Cell(i, 3).Range.Text = "$" + String.Format("{0:n}", Convert.ToDouble(xlWorksheet.get_Range("Q" + (source[s1, 0] + (i - 3)).ToString()).Text)); //net unit price
+                    orderTable.Cell(i, 4).Range.Text = xlWorksheet.get_Range("R" + (source[s1, 0] + (i - 3)).ToString()).Text; //License Quantity
+                    orderTable.Cell(i, 5).Range.Text = xlWorksheet.get_Range("S" + (source[s1, 0] + (i - 3)).ToString()).Text; //Usage Country
+                    orderTable.Cell(i, 6).Range.Text = "$" + String.Format("{0:n}", Convert.ToDouble(xlWorksheet.get_Range("T" + (source[s1, 0] + (i - 3)).ToString()).Text)); //Extended Amount
+
+                    orderTable.Rows[i].Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+                }
+
+
+            }
+
+            orderTable.Rows[2].Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+
+            //Merge the cells we want to merge
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Cell(1, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Cell(source[s1, 1] + 3, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Cell(source[s1, 1] + 4, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Cell(source[s1, 1] + 5, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+
+            for (int r = 3; r < 5 + source[s1, 1]; r++)
+            {
+                orderTable.Rows[r].Range.Font.Bold = 0;
+            }
+
+            //Insert another paragraph.
+            Word.Paragraph oPara4;
+            oRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            oPara4 = oDoc.Content.Paragraphs.Add(ref oRng);
+            oPara4.Range.Text = "";
+            oPara4.Range.Font.Bold = 1;
+            oPara4.Format.SpaceAfter = 0;
+            oPara4.Range.InsertParagraphAfter();
+
+            //Subtotal part
+            Word.Table subTable;
+            Word.Range sbdRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            subTable = oDoc.Tables.Add(sbdRng, 1, 2, ref oMissing, ref oMissing);
+            subTable.Columns[1].Width = 390;
+            subTable.Columns[2].Width = 78;
+            subTable.Borders.InsideLineStyle = Word.WdLineStyle.wdLineStyleSingle;
+            subTable.Borders.OutsideLineStyle = Word.WdLineStyle.wdLineStyleSingle;
+
+            subTable.Cell(1, 1).Range.Text = "Total Cost of True Up " + xlWorksheet.get_Range("H" + (source[s1, 0]).ToString()).Text + " during Contract Option Year One";
+            subTable.Cell(1, 2).Range.Text = "$" + String.Format("{0:n}", TOTAL);
+            subTable.Cell(1, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+            subTable.Cell(1, 2).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+
+
+            subTable.Range.ParagraphFormat.SpaceAfter = 6;
+            oDoc.Words.Last.InsertBreak(Word.WdBreakType.wdPageBreak);
+
+        }
+
+        private void ProcessOrdersubscriptionTable(Microsoft.Office.Interop.Excel.Worksheet xlWorksheet, Microsoft.Office.Interop.Word.Document oDoc, int[,] source, int s1)
+        {
+
+            object oMissing = System.Reflection.Missing.Value;
+            object oEndOfDoc = "\\endofdoc"; /* \endofdoc is a predefined bookmark */
+
+            //Insert a paragraph at the beginning of the document - fixed
+            Word.Paragraph oPara1;
+            oPara1 = oDoc.Content.Paragraphs.Add(ref oMissing);
+            oPara1.Range.Text = "" + xlWorksheet.get_Range("B" + source[s1, 0].ToString()).Text + xlWorksheet.get_Range("C" + source[s1, 0].ToString()).Text + ". " + xlWorksheet.get_Range("E" + source[s1, 0].ToString()).Text; //"3d Health Canada";
+            oPara1.Range.Font.Bold = 1;
+            oPara1.Format.SpaceAfter = 8;    //24 pt spacing after paragraph.
+            oPara1.Range.InsertParagraphAfter();
+
+            //Yellow highlighted Reinstate SA
+            Word.Paragraph ReinstateSA;
+            object oReinRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            ReinstateSA = oDoc.Content.Paragraphs.Add(ref oReinRng);
+            ReinstateSA.Range.Text = "Reinstate SA on line items missed on Renewal under Amendment " + xlWorksheet.get_Range("X" + source[s1, 0].ToString()).Text;//Reainstate SA missed on AMD xx
+            ReinstateSA.Range.HighlightColorIndex = Word.WdColorIndex.wdYellow;
+            ReinstateSA.Range.Font.Bold = 0;
+            ReinstateSA.Format.SpaceAfter = 8;
+            ReinstateSA.Range.InsertParagraphAfter();
+
+            //Insert a paragraph at the end of the document - fixed
+            Word.Paragraph oPara2;
+            object oRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            oPara2 = oDoc.Content.Paragraphs.Add(ref oRng);
+            oPara2.Range.Text = "Insert the Following Schedule " + xlWorksheet.get_Range("G" + source[s1, 0].ToString()).Text + "." + xlWorksheet.get_Range("H" + source[s1, 0].ToString()).Text + " at Appendix " + xlWorksheet.get_Range("I" + source[s1, 0].ToString()).Text + ", Schedule " + xlWorksheet.get_Range("G" + source[s1, 0].ToString()).Text;// + " - Part 2";
+            oPara2.Range.Font.Bold = 0;
+            oPara2.Range.HighlightColorIndex = Word.WdColorIndex.wdNoHighlight;
+            oPara2.Format.SpaceAfter = 8;
+            oPara2.Range.InsertParagraphAfter();
+
+            //Insert another paragraph.
+            Word.Paragraph oPara3;
+            oRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            oPara3 = oDoc.Content.Paragraphs.Add(ref oRng);
+            oPara3.Range.Text = "Schedule " + xlWorksheet.get_Range("G" + source[s1, 0].ToString()).Text + "." + xlWorksheet.get_Range("H" + source[s1, 0].ToString()).Text + " - TRUE UP Enrollment# " + xlWorksheet.get_Range("F" + source[s1, 0].ToString()).Text;
+            oPara2.Range.Font.Bold = 1;
+            oPara3.Format.SpaceAfter = 6;
+            oPara3.Range.InsertParagraphAfter();
+
+            //The table 
+            Word.Table orderTable;
+            Word.Range hdrng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            orderTable = oDoc.Tables.Add(hdrng, 5 + source[s1, 1], 10, ref oMissing, ref oMissing);
+            orderTable.Borders.InsideLineStyle = Word.WdLineStyle.wdLineStyleSingle;
+            orderTable.Borders.OutsideLineStyle = Word.WdLineStyle.wdLineStyleSingle;
+            orderTable.Range.ParagraphFormat.SpaceAfter = 0;
+
+            //Set column widths
+            orderTable.Columns[1].Width = 80;
+            orderTable.Columns[2].Width = 47;
+            orderTable.Columns[3].Width = 47;
+            orderTable.Columns[4].Width = 47;
+            orderTable.Columns[5].Width = 41;
+            orderTable.Columns[6].Width = 41;
+            orderTable.Columns[7].Width = 43;
+            orderTable.Columns[8].Width = 41;
+            orderTable.Columns[9].Width = 39;
+            orderTable.Columns[10].Width = 53;
+
+            // Table Contents
+            orderTable.Cell(1, 1).Range.Text = "Pricing & Usage Year 4, PO: RAS# " + xlWorksheet.get_Range("M" + source[s1, 0].ToString()).Text + " YR4";
+            orderTable.Cell(2, 1).Range.Text = "Product Description";
+            orderTable.Cell(2, 2).Range.Text = "Part Number";
+            orderTable.Cell(2, 3).Range.Text = "Usage Indicator";
+            orderTable.Cell(2, 4).Range.Text = "Usage Start Date";
+            orderTable.Cell(2, 5).Range.Text = "Unit of Measure";
+            orderTable.Cell(2, 6).Range.Text = "Unit Quantity";
+            orderTable.Cell(2, 7).Range.Text = "Net Unit Price (CAD)";
+            orderTable.Cell(2, 8).Range.Text = "License Quantity";
+            orderTable.Cell(2, 9).Range.Text = "Usage Country";
+            orderTable.Cell(2, 10).Range.Text = "Extended Amount (CAD)";
+
+            //this loop computes the subtotal, tax, and TOTAL Year 4 Payment
+            double sub = 0.0;
+            double HST = 0.0;
+
+            for (int sift = 1; sift < (source[s1, 1] + 1); sift++)
+            {
+                string stringsub = xlWorksheet.get_Range("T" + (source[s1, 0] + sift - 1).ToString()).Text;
+                string HSTsub = xlWorksheet.get_Range("V" + (source[s1, 0] + sift - 1).ToString()).Text;
+                sub = sub + Convert.ToDouble(stringsub);
+                HST = HST + Convert.ToDouble(HSTsub);
+
+            }
+
+            double TOTAL = sub + HST;
+
+            //inputs the above caluclated values into the last 3 rows of the table accordingly
+            for (int i = 3; i < 6 + source[s1, 1]; i++)
+            {
+                if (i > 2 + source[s1, 1])
+                {
+
+                    if (i == (3 + source[s1, 1]))
+                    {
+                        orderTable.Cell(i, 1).Range.Text = "Sub Total";
+                        orderTable.Cell(i, 10).Range.Text = "$" + String.Format("{0:n}", sub);
+                        orderTable.Cell(i, 10).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+                    }
+
+                    if (i == (4 + source[s1, 1]))
+                    {
+                        orderTable.Cell(i, 1).Range.Text = "Tax Based on original enrollment ship to " + "(" + xlWorksheet.get_Range("U" + (-1 + source[s1, 0] + source[s1, 1]).ToString()).Text + ")";
+                        orderTable.Cell(i, 10).Range.Text = "$" + String.Format("{0:n}", HST);
+                        orderTable.Cell(i, 10).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+                    }
+
+                    if (i == (5 + source[s1, 1]))
+                    {
+                        orderTable.Cell(i, 1).Range.Text = "TOTAL Year 4 Payment";
+                        orderTable.Cell(i, 10).Range.Text = "$" + String.Format("{0:n}", TOTAL);
+                        orderTable.Cell(i, 10).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+                    }
+
+                }
+
+                else
+                {
+                    orderTable.Cell(i, 1).Range.Text = xlWorksheet.get_Range("N" + (source[s1, 0] + (i - 3)).ToString()).Text; //product description
+                    orderTable.Cell(i, 2).Range.Text = xlWorksheet.get_Range("O" + (source[s1, 0] + (i - 3)).ToString()).Text; //part number
+                    orderTable.Cell(i, 3).Range.Text = xlWorksheet.get_Range("K" + (source[s1, 0] + (i - 3)).ToString()).Text; //Usage Indicator
+                    orderTable.Cell(i, 4).Range.Text = xlWorksheet.get_Range("J" + (source[s1, 0] + (i - 3)).ToString()).Text; //Usage Start Date
+                    orderTable.Cell(i, 5).Range.Text = xlWorksheet.get_Range("L" + (source[s1, 0] + (i - 3)).ToString()).Text; //Unit of Measure
+                    orderTable.Cell(i, 6).Range.Text = xlWorksheet.get_Range("P" + (source[s1, 0] + (i - 3)).ToString()).Text; //Unit Quantity
+                    orderTable.Cell(i, 7).Range.Text = "$" + String.Format("{0:n}", Convert.ToDouble(xlWorksheet.get_Range("Q" + (source[s1, 0] + (i - 3)).ToString()).Text)); //net unit price
+                    orderTable.Cell(i, 8).Range.Text = xlWorksheet.get_Range("R" + (source[s1, 0] + (i - 3)).ToString()).Text; //License Quantity
+                    orderTable.Cell(i, 9).Range.Text = xlWorksheet.get_Range("S" + (source[s1, 0] + (i - 3)).ToString()).Text; //Usage Country
+                    orderTable.Cell(i, 10).Range.Text = "$" + String.Format("{0:n}", Convert.ToDouble(xlWorksheet.get_Range("T" + (source[s1, 0] + (i - 3)).ToString()).Text)); //Extended Amount
+
+                    orderTable.Rows[i].Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+                }
+
+
+            }
+
+            orderTable.Rows[2].Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+
+            //Merge the cells we want to merge
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Cell(1, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+
+            orderTable.Rows[2].Range.Font.Size = 8;
+
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Cell(source[s1, 1] + 3, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Cell(source[s1, 1] + 4, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Cell(source[s1, 1] + 5, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+            orderTable.Rows[(source[s1, 1] + 5)].Range.Font.Size = 9;
+
+            for (int r = 3; r < 5 + source[s1, 1]; r++)
+            {
+                orderTable.Rows[r].Range.Font.Bold = 0;
+
+                if (r < source[s1, 1] + 3)
+                {
+                    orderTable.Rows[r].Range.Font.Size = 8;
+                }
+                else
+                {
+                    orderTable.Rows[r].Range.Font.Size = 9;
+                }
+            }
+
+            //Insert another paragraph.
+            Word.Paragraph oPara4;
+            oRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            oPara4 = oDoc.Content.Paragraphs.Add(ref oRng);
+            oPara4.Range.Text = "";
+            oPara4.Range.Font.Bold = 1;
+            oPara4.Format.SpaceAfter = 0;
+            oPara4.Range.InsertParagraphAfter();
+
+            //Subtotal part
+            Word.Table subTable;
+            Word.Range sbdRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            subTable = oDoc.Tables.Add(sbdRng, 1, 2, ref oMissing, ref oMissing);
+            subTable.Columns[1].Width = 426;
+            subTable.Columns[2].Width = 53;
+            subTable.Borders.InsideLineStyle = Word.WdLineStyle.wdLineStyleSingle;
+            subTable.Borders.OutsideLineStyle = Word.WdLineStyle.wdLineStyleSingle;
+
+            subTable.Cell(1, 1).Range.Text = "Total Cost during Contract Option Year One";
+            subTable.Cell(1, 2).Range.Text = "$" + String.Format("{0:n}", TOTAL);
+            subTable.Rows[1].Range.Font.Size = 9;
+            subTable.Cell(1, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+            subTable.Cell(1, 2).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+            subTable.Range.ParagraphFormat.SpaceAfter = 6;
+            oDoc.Words.Last.InsertBreak(Word.WdBreakType.wdPageBreak);
+
+        }
+
+        private void creditlnsaTable(Microsoft.Office.Interop.Excel.Worksheet xlWorksheet, Microsoft.Office.Interop.Word.Document oDoc, int[,] source, int s1)
+        {
+
+            object oMissing = System.Reflection.Missing.Value;
+            object oEndOfDoc = "\\endofdoc"; /* \endofdoc is a predefined bookmark */
+
+            //Credit invoice number xx from AMD yy
+            Word.Paragraph oPara1;
+            oPara1 = oDoc.Content.Paragraphs.Add(ref oMissing);
+            oPara1.Range.Text = "" + xlWorksheet.get_Range("B" + source[s1, 0].ToString()).Text + xlWorksheet.get_Range("C" + source[s1, 0].ToString()).Text + ". Credit invoice number " + xlWorksheet.get_Range("X" + source[s1, 0].ToString()).Text + " from Amendment " + xlWorksheet.get_Range("Y" + source[s1, 0].ToString()).Text; //Credit invoice number from amendment xx;
+            oPara1.Range.Paragraphs.TabIndent(-1);
+            oPara1.Range.Font.Bold = 1;
+            oPara1.Format.SpaceAfter = 8;    //24 pt spacing after paragraph.
+            oPara1.Range.InsertParagraphAfter();
+
+            //DEPARTMENT NAME: "ins dept"
+            Word.Paragraph oParad;
+            oParad = oDoc.Content.Paragraphs.Add(ref oMissing);
+            oParad.Range.Text = "DEPARTMENT NAME: " + xlWorksheet.get_Range("E" + source[s1, 0].ToString()).Text; //"3d Health Canada";
+            oParad.Range.Paragraphs.TabIndent(-1);
+            oParad.Range.Font.Bold = 1;
+            oParad.Format.SpaceAfter = 8;    //24 pt spacing after paragraph.
+            oParad.Range.InsertParagraphAfter();
+
+            //Insert the following schedule xx at ppendix xx, schedule xx
+            Word.Paragraph oPara2;
+            object oRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            oPara2 = oDoc.Content.Paragraphs.Add(ref oRng);
+            oPara2.Range.Text = "Insert the Following Schedule " + xlWorksheet.get_Range("G" + source[s1, 0].ToString()).Text + " at Appendix " + xlWorksheet.get_Range("I" + source[s1, 0].ToString()).Text + ", Schedule " + xlWorksheet.get_Range("G" + source[s1, 0].ToString()).Text;// + " - Part 2";
+            oPara2.Range.HighlightColorIndex = Word.WdColorIndex.wdNoHighlight;
+            oPara2.Range.Font.Bold = 0;
+            oPara2.Format.SpaceAfter = 8;
+            oPara2.Range.InsertParagraphAfter();
+
+            //Schedule xx - Server&Clound Enrollment or Enterprise Enrollment
+            if (xlWorksheet.get_Range("I" + source[s1, 0].ToString()).Text == "3")
+            {
+                Word.Paragraph oPara3;
+                oRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+                oPara3 = oDoc.Content.Paragraphs.Add(ref oRng);
+                oPara3.Range.Text = "Schedule " + xlWorksheet.get_Range("G" + source[s1, 0].ToString()).Text + " - Enterprise Enrollment " + xlWorksheet.get_Range("F" + source[s1, 0].ToString()).Text;
+                oPara2.Range.Font.Bold = 1;
+                oPara3.Format.SpaceAfter = 6;
+                oPara3.Range.InsertParagraphAfter();
+            }
+
+            if (xlWorksheet.get_Range("I" + source[s1, 0].ToString()).Text == "4")
+            {
+                Word.Paragraph oPara3;
+                oRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+                oPara3 = oDoc.Content.Paragraphs.Add(ref oRng);
+                oPara3.Range.Text = "Schedule " + xlWorksheet.get_Range("G" + source[s1, 0].ToString()).Text + " - Server and Cloud Enrollment " + xlWorksheet.get_Range("F" + source[s1, 0].ToString()).Text;
+                oPara2.Range.Font.Bold = 1;
+                oPara3.Format.SpaceAfter = 6;
+                oPara3.Range.InsertParagraphAfter();
+            }
+
+            //The table 
+            Word.Table orderTable;
+            Word.Range hdrng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            orderTable = oDoc.Tables.Add(hdrng, 6 + source[s1, 1], 6, ref oMissing, ref oMissing);
+            orderTable.Borders.InsideLineStyle = Word.WdLineStyle.wdLineStyleSingle;
+            orderTable.Borders.OutsideLineStyle = Word.WdLineStyle.wdLineStyleSingle;
+            orderTable.Range.ParagraphFormat.SpaceAfter = 0;
+
+            //Set column widths
+            orderTable.Columns[1].Width = 130;
+            orderTable.Columns[2].Width = 65;
+            orderTable.Columns[3].Width = 65;
+            orderTable.Columns[4].Width = 65;
+            orderTable.Columns[5].Width = 65;
+            orderTable.Columns[6].Width = 78;
+
+            // Table Contents
+            orderTable.Cell(1, 1).Range.Text = "Year 4 - April 1, 2017 to March 31, 2018 - RAS# " + xlWorksheet.get_Range("M" + source[s1, 0].ToString()).Text;
+            orderTable.Cell(2, 1).Range.Text = "Product Description";
+            orderTable.Cell(2, 2).Range.Text = "Part Number";
+            orderTable.Cell(2, 3).Range.Text = "Net Unit Price (CAD)";
+            orderTable.Cell(2, 4).Range.Text = "License Quantity";
+            orderTable.Cell(2, 5).Range.Text = "Usage Country";
+            orderTable.Cell(2, 6).Range.Text = "Extended Amount (CAD)";
+
+            //this loop computes the subtotal, tax, and TOTAL Year 4 Payment
+            double sub = 0.0;
+            double HST = 0.0;
+
+            for (int sift = 1; sift < (source[s1, 1] + 1); sift++)
+            {
+                string stringsub = xlWorksheet.get_Range("T" + (source[s1, 0] + sift - 1).ToString()).Text;
+                string HSTsub = xlWorksheet.get_Range("V" + (source[s1, 0] + sift - 1).ToString()).Text;
+                sub = sub + Convert.ToDouble(stringsub);
+                HST = HST + Convert.ToDouble(HSTsub);
+
+            }
+
+            double TOTAL = sub + HST;
+
+            //inputs the above caluclated values into the last 3 rows of the table accordingly
+            for (int i = 3; i < 7 + source[s1, 1]; i++)
+            {
+                if (i > 2 + source[s1, 1])
+                {
+
+                    if (i == (3 + source[s1, 1]))
+                    {
+                        orderTable.Cell(i, 1).Range.Text = "Sub Total";
+                        orderTable.Cell(i, 6).Range.Text = "-$" + String.Format("{0:n}", sub);
+                        orderTable.Cell(i, 6).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+                    }
+
+                    if (i == (4 + source[s1, 1]))
+                    {
+                        orderTable.Cell(i, 1).Range.Text = "Tax Based on original enrollment ship to " + "(" + xlWorksheet.get_Range("U" + (-1 + source[s1, 0] + source[s1, 1]).ToString()).Text + ")";
+                        orderTable.Cell(i, 6).Range.Text = "-$" + String.Format("{0:n}", HST);
+                        orderTable.Cell(i, 6).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+                    }
+
+                    if (i == (5 + source[s1, 1]))
+                    {
+                        orderTable.Cell(i, 1).Range.Text = "TOTAL License and Software Assurance Year 4 Payment";
+                        orderTable.Cell(i, 6).Range.Text = "-$" + String.Format("{0:n}", TOTAL);
+                        orderTable.Cell(i, 6).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+                    }
+
+                    if (i == (6 + source[s1, 1]))
+                    {
+                        orderTable.Cell(i, 1).Range.Text = "Invoice Date: 4th Anniversary Date";
+                        orderTable.Cell(i, 6).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+                    }
+
+                }
+
+                else
+                {
+                    orderTable.Cell(i, 1).Range.Text = xlWorksheet.get_Range("N" + (source[s1, 0] + (i - 3)).ToString()).Text; //product description
+                    orderTable.Cell(i, 2).Range.Text = xlWorksheet.get_Range("O" + (source[s1, 0] + (i - 3)).ToString()).Text; //part number
+                    orderTable.Cell(i, 3).Range.Text = "$" + String.Format("{0:n}", Convert.ToDouble(xlWorksheet.get_Range("Q" + (source[s1, 0] + (i - 3)).ToString()).Text)); //net unit price
+                    orderTable.Cell(i, 4).Range.Text = xlWorksheet.get_Range("R" + (source[s1, 0] + (i - 3)).ToString()).Text; //License Quantity
+                    orderTable.Cell(i, 5).Range.Text = xlWorksheet.get_Range("S" + (source[s1, 0] + (i - 3)).ToString()).Text; //Usage Country
+                    orderTable.Cell(i, 6).Range.Text = "-$" + String.Format("{0:n}", Convert.ToDouble(xlWorksheet.get_Range("T" + (source[s1, 0] + (i - 3)).ToString()).Text)); //Extended Amount
+
+                    orderTable.Rows[i].Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+                }
+
+
+            }
+
+            orderTable.Rows[2].Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+
+            //Merge the cells we want to merge
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Cell(1, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Cell(source[s1, 1] + 3, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Cell(source[s1, 1] + 4, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Cell(source[s1, 1] + 5, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+
+            orderTable.Rows[source[s1, 1] + 6].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 6].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 6].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 6].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 6].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 6].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 6].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 6].Cells[2]);
+            orderTable.Cell(source[s1, 1] + 6, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+
+            for (int r = 3; r < 6 + source[s1, 1]; r++)
+            {
+                orderTable.Rows[r].Range.Font.Bold = 0;
+            }
+
+            //Insert another paragraph.
+            Word.Paragraph oPara4;
+            oRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            oPara4 = oDoc.Content.Paragraphs.Add(ref oRng);
+            oPara4.Range.Text = "";
+            oPara4.Range.Font.Bold = 1;
+            oPara4.Format.SpaceAfter = 0;
+            oPara4.Range.InsertParagraphAfter();
+
+            //Subtotal part
+            Word.Table subTable;
+            Word.Range sbdRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            subTable = oDoc.Tables.Add(sbdRng, 1, 2, ref oMissing, ref oMissing);
+            subTable.Columns[1].Width = 390;
+            subTable.Columns[2].Width = 78;
+            subTable.Borders.InsideLineStyle = Word.WdLineStyle.wdLineStyleSingle;
+            subTable.Borders.OutsideLineStyle = Word.WdLineStyle.wdLineStyleSingle;
+
+            subTable.Cell(1, 1).Range.Text = "Total Renewal Cost Option Year 1";
+            subTable.Cell(1, 2).Range.Text = "-$" + String.Format("{0:n}", TOTAL);
+            subTable.Cell(1, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+            subTable.Cell(1, 2).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+
+
+            subTable.Range.ParagraphFormat.SpaceAfter = 6;
+            oDoc.Words.Last.InsertBreak(Word.WdBreakType.wdPageBreak);
+
+        }
+
+        private void creditSubscriptionTable(Microsoft.Office.Interop.Excel.Worksheet xlWorksheet, Microsoft.Office.Interop.Word.Document oDoc, int[,] source, int s1)
+        {
+
+            object oMissing = System.Reflection.Missing.Value;
+            object oEndOfDoc = "\\endofdoc"; /* \endofdoc is a predefined bookmark */
+
+            //Credit invoice number xx from AMD yy
+            Word.Paragraph oPara1;
+            oPara1 = oDoc.Content.Paragraphs.Add(ref oMissing);
+            oPara1.Range.Text = "" + xlWorksheet.get_Range("B" + source[s1, 0].ToString()).Text + xlWorksheet.get_Range("C" + source[s1, 0].ToString()).Text + ". Credit invoice number " + xlWorksheet.get_Range("X" + source[s1, 0].ToString()).Text + " from Amendment " + xlWorksheet.get_Range("Y" + source[s1, 0].ToString()).Text; //Credit invoice number from amendment xx;
+            oPara1.Range.Paragraphs.TabIndent(-1);
+            oPara1.Range.Font.Bold = 1;
+            oPara1.Format.SpaceAfter = 8;    //24 pt spacing after paragraph.
+            oPara1.Range.InsertParagraphAfter();
+
+            //DEPARTMENT NAME: "ins dept"
+            Word.Paragraph oParad;
+            oParad = oDoc.Content.Paragraphs.Add(ref oMissing);
+            oParad.Range.Text = "DEPARTMENT NAME: " + xlWorksheet.get_Range("E" + source[s1, 0].ToString()).Text; //"3d Health Canada";
+            oParad.Range.Paragraphs.TabIndent(-1);
+            oParad.Range.Font.Bold = 1;
+            oParad.Format.SpaceAfter = 8;    //24 pt spacing after paragraph.
+            oParad.Range.InsertParagraphAfter();
+
+            //Insert the following schedule xx at ppendix xx, schedule xx
+            Word.Paragraph oPara2;
+            object oRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            oPara2 = oDoc.Content.Paragraphs.Add(ref oRng);
+            oPara2.Range.Text = "Insert the Following Schedule " + xlWorksheet.get_Range("G" + source[s1, 0].ToString()).Text + " at Appendix " + xlWorksheet.get_Range("I" + source[s1, 0].ToString()).Text + ", Schedule " + xlWorksheet.get_Range("G" + source[s1, 0].ToString()).Text;// + " - Part 2";
+            oPara2.Range.HighlightColorIndex = Word.WdColorIndex.wdNoHighlight;
+            oPara2.Range.Font.Bold = 0;
+            oPara2.Format.SpaceAfter = 8;
+            oPara2.Range.InsertParagraphAfter();
+
+            //Schedule xx - Server&Clound Enrollment or Enterprise Enrollment
+            if (xlWorksheet.get_Range("G" + source[s1, 0].ToString()).Text == "3")
+            {
+                Word.Paragraph oPara3;
+                oRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+                oPara3 = oDoc.Content.Paragraphs.Add(ref oRng);
+                oPara3.Range.Text = "Schedule " + xlWorksheet.get_Range("G" + source[s1, 0].ToString()).Text + " - Enterprise Enrollment " + xlWorksheet.get_Range("F" + source[s1, 0].ToString()).Text;
+                oPara2.Range.Font.Bold = 1;
+                oPara3.Format.SpaceAfter = 6;
+                oPara3.Range.InsertParagraphAfter();
+            }
+
+            if (xlWorksheet.get_Range("G" + source[s1, 0].ToString()).Text == "4")
+            {
+                Word.Paragraph oPara3;
+                oRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+                oPara3 = oDoc.Content.Paragraphs.Add(ref oRng);
+                oPara3.Range.Text = "Schedule " + xlWorksheet.get_Range("G" + source[s1, 0].ToString()).Text + " - Server and Cloud Enrollment " + xlWorksheet.get_Range("F" + source[s1, 0].ToString()).Text;
+                oPara2.Range.Font.Bold = 1;
+                oPara3.Format.SpaceAfter = 6;
+                oPara3.Range.InsertParagraphAfter();
+            }
+
+            //The table 
+            Word.Table orderTable;
+            Word.Range hdrng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            orderTable = oDoc.Tables.Add(hdrng, 6 + source[s1, 1], 10, ref oMissing, ref oMissing);
+            orderTable.Borders.InsideLineStyle = Word.WdLineStyle.wdLineStyleSingle;
+            orderTable.Borders.OutsideLineStyle = Word.WdLineStyle.wdLineStyleSingle;
+            orderTable.Range.ParagraphFormat.SpaceAfter = 0;
+
+            //Set column widths
+            orderTable.Columns[1].Width = 80;
+            orderTable.Columns[2].Width = 47;
+            orderTable.Columns[3].Width = 47;
+            orderTable.Columns[4].Width = 47;
+            orderTable.Columns[5].Width = 41;
+            orderTable.Columns[6].Width = 41;
+            orderTable.Columns[7].Width = 43;
+            orderTable.Columns[8].Width = 41;
+            orderTable.Columns[9].Width = 39;
+            orderTable.Columns[10].Width = 53;
+
+            // Table Contents
+            orderTable.Cell(1, 1).Range.Text = "Pricing & Usage Year 4, PO: RAS# " + xlWorksheet.get_Range("M" + source[s1, 0].ToString()).Text + " YR4";
+            orderTable.Cell(2, 1).Range.Text = "Product Description";
+            orderTable.Cell(2, 2).Range.Text = "Part Number";
+            orderTable.Cell(2, 3).Range.Text = "Usage Indicator";
+            orderTable.Cell(2, 4).Range.Text = "Usage Start Date";
+            orderTable.Cell(2, 5).Range.Text = "Unit of Measure";
+            orderTable.Cell(2, 6).Range.Text = "Unit Quantity";
+            orderTable.Cell(2, 7).Range.Text = "Net Unit Price (CAD)";
+            orderTable.Cell(2, 8).Range.Text = "License Quantity";
+            orderTable.Cell(2, 9).Range.Text = "Usage Country";
+            orderTable.Cell(2, 10).Range.Text = "Extended Amount (CAD)";
+
+            //this loop computes the subtotal, tax, and TOTAL Year 4 Payment
+            double sub = 0.0;
+            double HST = 0.0;
+
+            for (int sift = 1; sift < (source[s1, 1] + 1); sift++)
+            {
+                string stringsub = xlWorksheet.get_Range("T" + (source[s1, 0] + sift - 1).ToString()).Text;
+                string HSTsub = xlWorksheet.get_Range("V" + (source[s1, 0] + sift - 1).ToString()).Text;
+                sub = sub + Convert.ToDouble(stringsub);
+                HST = HST + Convert.ToDouble(HSTsub);
+
+            }
+
+            double TOTAL = sub + HST;
+
+            //inputs the above caluclated values into the last 3 rows of the table accordingly
+            for (int i = 3; i < 7 + source[s1, 1]; i++)
+            {
+                if (i > 2 + source[s1, 1])
+                {
+
+                    if (i == (3 + source[s1, 1]))
+                    {
+                        orderTable.Cell(i, 1).Range.Text = "Sub Total";
+                        orderTable.Cell(i, 10).Range.Text = "-$" + String.Format("{0:n}", sub);
+                        orderTable.Cell(i, 10).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+                    }
+
+                    if (i == (4 + source[s1, 1]))
+                    {
+                        orderTable.Cell(i, 1).Range.Text = "Tax Based on original enrollment ship to " + "(" + xlWorksheet.get_Range("U" + (-1 + source[s1, 0] + source[s1, 1]).ToString()).Text + ")";
+                        orderTable.Cell(i, 10).Range.Text = "-$" + String.Format("{0:n}", HST);
+                        orderTable.Cell(i, 10).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+                    }
+
+                    if (i == (5 + source[s1, 1]))
+                    {
+                        orderTable.Cell(i, 1).Range.Text = "TOTAL Year 4 Payment";
+                        orderTable.Cell(i, 10).Range.Text = "-$" + String.Format("{0:n}", TOTAL);
+                        orderTable.Cell(i, 10).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+                    }
+                    if (i == (6 + source[s1, 1]))
+                    {
+                        orderTable.Cell(i, 1).Range.Text = "Invoice Date: 4th Anniversary Date";
+                        orderTable.Cell(i, 10).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+                    }
+
+
+                }
+
+                else
+                {
+                    orderTable.Cell(i, 1).Range.Text = xlWorksheet.get_Range("N" + (source[s1, 0] + (i - 3)).ToString()).Text; //product description
+                    orderTable.Cell(i, 2).Range.Text = xlWorksheet.get_Range("O" + (source[s1, 0] + (i - 3)).ToString()).Text; //part number
+                    orderTable.Cell(i, 3).Range.Text = xlWorksheet.get_Range("K" + (source[s1, 0] + (i - 3)).ToString()).Text; //Usage Indicator
+                    orderTable.Cell(i, 4).Range.Text = xlWorksheet.get_Range("J" + (source[s1, 0] + (i - 3)).ToString()).Text; //Usage Start Date
+                    orderTable.Cell(i, 5).Range.Text = xlWorksheet.get_Range("L" + (source[s1, 0] + (i - 3)).ToString()).Text; //Unit of Measure
+                    orderTable.Cell(i, 6).Range.Text = xlWorksheet.get_Range("P" + (source[s1, 0] + (i - 3)).ToString()).Text; //Unit Quantity
+                    orderTable.Cell(i, 7).Range.Text = "$" + String.Format("{0:n}", Convert.ToDouble(xlWorksheet.get_Range("Q" + (source[s1, 0] + (i - 3)).ToString()).Text)); //net unit price
+                    orderTable.Cell(i, 8).Range.Text = xlWorksheet.get_Range("R" + (source[s1, 0] + (i - 3)).ToString()).Text; //License Quantity
+                    orderTable.Cell(i, 9).Range.Text = xlWorksheet.get_Range("S" + (source[s1, 0] + (i - 3)).ToString()).Text; //Usage Country
+                    orderTable.Cell(i, 10).Range.Text = "-$" + String.Format("{0:n}", Convert.ToDouble(xlWorksheet.get_Range("T" + (source[s1, 0] + (i - 3)).ToString()).Text)); //Extended Amount
+
+                    orderTable.Rows[i].Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+                }
+
+
+            }
+
+            orderTable.Rows[2].Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+
+            //Merge the cells we want to merge
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Cell(1, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+
+            orderTable.Rows[2].Range.Font.Size = 8;
+
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Cell(source[s1, 1] + 3, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Cell(source[s1, 1] + 4, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Cell(source[s1, 1] + 5, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+            orderTable.Rows[(source[s1, 1] + 5)].Range.Font.Size = 9;
+
+            orderTable.Rows[source[s1, 1] + 6].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 6].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 6].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 6].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 6].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 6].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 6].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 6].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 6].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 6].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 6].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 6].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 6].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 6].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 6].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 6].Cells[2]);
+            orderTable.Cell(source[s1, 1] + 6, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+            orderTable.Rows[(source[s1, 1] + 6)].Range.Font.Size = 9;
+
+            for (int r = 3; r < 6 + source[s1, 1]; r++)
+            {
+                orderTable.Rows[r].Range.Font.Bold = 0;
+
+                if (r < source[s1, 1] + 3)
+                {
+                    orderTable.Rows[r].Range.Font.Size = 8;
+                }
+                else
+                {
+                    orderTable.Rows[r].Range.Font.Size = 9;
+                }
+            }
+
+            //Insert another paragraph.
+            Word.Paragraph oPara4;
+            oRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            oPara4 = oDoc.Content.Paragraphs.Add(ref oRng);
+            oPara4.Range.Text = "";
+            oPara4.Range.Font.Bold = 1;
+            oPara4.Format.SpaceAfter = 0;
+            oPara4.Range.InsertParagraphAfter();
+
+            //Subtotal part
+            Word.Table subTable;
+            Word.Range sbdRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            subTable = oDoc.Tables.Add(sbdRng, 1, 2, ref oMissing, ref oMissing);
+            subTable.Columns[1].Width = 426;
+            subTable.Columns[2].Width = 53;
+            subTable.Borders.InsideLineStyle = Word.WdLineStyle.wdLineStyleSingle;
+            subTable.Borders.OutsideLineStyle = Word.WdLineStyle.wdLineStyleSingle;
+
+            subTable.Cell(1, 1).Range.Text = "Total Renewal Cost Option Year 1";
+            subTable.Cell(1, 2).Range.Text = "-$" + String.Format("{0:n}", TOTAL);
+            subTable.Rows[1].Range.Font.Size = 9;
+            subTable.Cell(1, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+            subTable.Cell(1, 2).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+            subTable.Range.ParagraphFormat.SpaceAfter = 6;
+            oDoc.Words.Last.InsertBreak(Word.WdBreakType.wdPageBreak);
+
+        }
+
+        private void rebilllnsaTable(Microsoft.Office.Interop.Excel.Worksheet xlWorksheet, Microsoft.Office.Interop.Word.Document oDoc, int[,] source, int s1)
+        {
+
+            object oMissing = System.Reflection.Missing.Value;
+            object oEndOfDoc = "\\endofdoc"; /* \endofdoc is a predefined bookmark */
+
+            //Subtitle 3a Stats Canada
+            Word.Paragraph oPara1;
+            oPara1 = oDoc.Content.Paragraphs.Add(ref oMissing);
+            oPara1.Range.Text = "" + xlWorksheet.get_Range("B" + source[s1, 0].ToString()).Text + xlWorksheet.get_Range("C" + source[s1, 0].ToString()).Text + ". " + xlWorksheet.get_Range("E" + source[s1, 0].ToString()).Text; //Credit invoice number from amendment xx;
+            oPara1.Range.Paragraphs.TabIndent(-1);
+            oPara1.Range.Font.Bold = 1;
+            oPara1.Format.SpaceAfter = 8;    //24 pt spacing after paragraph.
+            oPara1.Range.InsertParagraphAfter();
+
+            //DEPARTMENT NAME: "ins dept"
+            Word.Paragraph oParad;
+            oParad = oDoc.Content.Paragraphs.Add(ref oMissing);
+            oParad.Range.Text = "DEPARTMENT NAME: " + xlWorksheet.get_Range("E" + source[s1, 0].ToString()).Text; //"3d Health Canada";
+            oParad.Range.Paragraphs.TabIndent(-1);
+            oParad.Range.Font.Bold = 1;
+            oParad.Format.SpaceAfter = 8;    //24 pt spacing after paragraph.
+            oParad.Range.InsertParagraphAfter();
+
+            //Insert the following schedule xx at ppendix xx, schedule xx
+            Word.Paragraph oPara2;
+            object oRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            oPara2 = oDoc.Content.Paragraphs.Add(ref oRng);
+            oPara2.Range.Text = "Insert the Following Schedule " + xlWorksheet.get_Range("G" + source[s1, 0].ToString()).Text + " at Appendix " + xlWorksheet.get_Range("I" + source[s1, 0].ToString()).Text + ", Schedule " + xlWorksheet.get_Range("G" + source[s1, 0].ToString()).Text;// + " - Part 2";
+            oPara2.Range.HighlightColorIndex = Word.WdColorIndex.wdNoHighlight;
+            oPara2.Range.Font.Bold = 0;
+            oPara2.Format.SpaceAfter = 8;
+            oPara2.Range.InsertParagraphAfter();
+
+            //Schedule xx - Server&Clound Enrollment or Enterprise Enrollment
+            if (xlWorksheet.get_Range("I" + source[s1, 0].ToString()).Text == "3")
+            {
+                Word.Paragraph oPara3;
+                oRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+                oPara3 = oDoc.Content.Paragraphs.Add(ref oRng);
+                oPara3.Range.Text = "Schedule " + xlWorksheet.get_Range("G" + source[s1, 0].ToString()).Text + " - Enterprise Enrollment " + xlWorksheet.get_Range("F" + source[s1, 0].ToString()).Text;
+                oPara2.Range.Font.Bold = 1;
+                oPara3.Format.SpaceAfter = 6;
+                oPara3.Range.InsertParagraphAfter();
+            }
+
+            if (xlWorksheet.get_Range("I" + source[s1, 0].ToString()).Text == "4")
+            {
+                Word.Paragraph oPara3;
+                oRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+                oPara3 = oDoc.Content.Paragraphs.Add(ref oRng);
+                oPara3.Range.Text = "Schedule " + xlWorksheet.get_Range("G" + source[s1, 0].ToString()).Text + " - Server and Cloud Enrollment " + xlWorksheet.get_Range("F" + source[s1, 0].ToString()).Text;
+                oPara2.Range.Font.Bold = 1;
+                oPara3.Format.SpaceAfter = 6;
+                oPara3.Range.InsertParagraphAfter();
+            }
+
+            //The table 
+            Word.Table orderTable;
+            Word.Range hdrng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            orderTable = oDoc.Tables.Add(hdrng, 6 + source[s1, 1], 6, ref oMissing, ref oMissing);
+            orderTable.Borders.InsideLineStyle = Word.WdLineStyle.wdLineStyleSingle;
+            orderTable.Borders.OutsideLineStyle = Word.WdLineStyle.wdLineStyleSingle;
+            orderTable.Range.ParagraphFormat.SpaceAfter = 0;
+
+            //Set column widths
+            orderTable.Columns[1].Width = 130;
+            orderTable.Columns[2].Width = 65;
+            orderTable.Columns[3].Width = 65;
+            orderTable.Columns[4].Width = 65;
+            orderTable.Columns[5].Width = 65;
+            orderTable.Columns[6].Width = 78;
+
+            // Table Contents
+            orderTable.Cell(1, 1).Range.Text = "Year 4 - April 1, 2017 to March 31, 2018 - RAS# " + xlWorksheet.get_Range("M" + source[s1, 0].ToString()).Text;
+            orderTable.Cell(2, 1).Range.Text = "Product Description";
+            orderTable.Cell(2, 2).Range.Text = "Part Number";
+            orderTable.Cell(2, 3).Range.Text = "Net Unit Price (CAD)";
+            orderTable.Cell(2, 4).Range.Text = "License Quantity";
+            orderTable.Cell(2, 5).Range.Text = "Usage Country";
+            orderTable.Cell(2, 6).Range.Text = "Extended Amount (CAD)";
+
+            //this loop computes the subtotal, tax, and TOTAL Year 4 Payment
+            double sub = 0.0;
+            double HST = 0.0;
+
+            for (int sift = 1; sift < (source[s1, 1] + 1); sift++)
+            {
+                string stringsub = xlWorksheet.get_Range("T" + (source[s1, 0] + sift - 1).ToString()).Text;
+                string HSTsub = xlWorksheet.get_Range("V" + (source[s1, 0] + sift - 1).ToString()).Text;
+                sub = sub + Convert.ToDouble(stringsub);
+                HST = HST + Convert.ToDouble(HSTsub);
+
+            }
+
+            double TOTAL = sub + HST;
+
+            //inputs the above caluclated values into the last 3 rows of the table accordingly
+            for (int i = 3; i < 7 + source[s1, 1]; i++)
+            {
+                if (i > 2 + source[s1, 1])
+                {
+
+                    if (i == (3 + source[s1, 1]))
+                    {
+                        orderTable.Cell(i, 1).Range.Text = "Sub Total";
+                        orderTable.Cell(i, 6).Range.Text = "$" + String.Format("{0:n}", sub);
+                        orderTable.Cell(i, 6).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+                    }
+
+                    if (i == (4 + source[s1, 1]))
+                    {
+                        orderTable.Cell(i, 1).Range.Text = "Tax Based on original enrollment ship to " + "(" + xlWorksheet.get_Range("U" + (-1 + source[s1, 0] + source[s1, 1]).ToString()).Text + ")";
+                        orderTable.Cell(i, 6).Range.Text = "$" + String.Format("{0:n}", HST);
+                        orderTable.Cell(i, 6).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+                    }
+
+                    if (i == (5 + source[s1, 1]))
+                    {
+                        orderTable.Cell(i, 1).Range.Text = "TOTAL License and Software Assurance Year 4 Payment";
+                        orderTable.Cell(i, 6).Range.Text = "$" + String.Format("{0:n}", TOTAL);
+                        orderTable.Cell(i, 6).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+                    }
+
+                    if (i == (6 + source[s1, 1]))
+                    {
+                        orderTable.Cell(i, 1).Range.Text = "Invoice Date: 4th Anniversary Date";
+                        orderTable.Cell(i, 6).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+                    }
+
+                }
+
+                else
+                {
+                    orderTable.Cell(i, 1).Range.Text = xlWorksheet.get_Range("N" + (source[s1, 0] + (i - 3)).ToString()).Text; //product description
+                    orderTable.Cell(i, 2).Range.Text = xlWorksheet.get_Range("O" + (source[s1, 0] + (i - 3)).ToString()).Text; //part number
+                    orderTable.Cell(i, 3).Range.Text = "$" + String.Format("{0:n}", Convert.ToDouble(xlWorksheet.get_Range("Q" + (source[s1, 0] + (i - 3)).ToString()).Text)); //net unit price
+                    orderTable.Cell(i, 4).Range.Text = xlWorksheet.get_Range("R" + (source[s1, 0] + (i - 3)).ToString()).Text; //License Quantity
+                    orderTable.Cell(i, 5).Range.Text = xlWorksheet.get_Range("S" + (source[s1, 0] + (i - 3)).ToString()).Text; //Usage Country
+                    orderTable.Cell(i, 6).Range.Text = "$" + String.Format("{0:n}", Convert.ToDouble(xlWorksheet.get_Range("T" + (source[s1, 0] + (i - 3)).ToString()).Text)); //Extended Amount
+
+                    orderTable.Rows[i].Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+                }
+
+
+            }
+
+            orderTable.Rows[2].Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+
+            //Merge the cells we want to merge
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Cell(1, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Cell(source[s1, 1] + 3, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Cell(source[s1, 1] + 4, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Cell(source[s1, 1] + 5, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+
+            orderTable.Rows[source[s1, 1] + 6].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 6].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 6].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 6].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 6].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 6].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 6].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 6].Cells[2]);
+            orderTable.Cell(source[s1, 1] + 6, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+
+            for (int r = 3; r < 6 + source[s1, 1]; r++)
+            {
+                orderTable.Rows[r].Range.Font.Bold = 0;
+            }
+
+            //Insert another paragraph.
+            Word.Paragraph oPara4;
+            oRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            oPara4 = oDoc.Content.Paragraphs.Add(ref oRng);
+            oPara4.Range.Text = "";
+            oPara4.Range.Font.Bold = 1;
+            oPara4.Format.SpaceAfter = 0;
+            oPara4.Range.InsertParagraphAfter();
+
+            //Subtotal part
+            Word.Table subTable;
+            Word.Range sbdRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            subTable = oDoc.Tables.Add(sbdRng, 1, 2, ref oMissing, ref oMissing);
+            subTable.Columns[1].Width = 390;
+            subTable.Columns[2].Width = 78;
+            subTable.Borders.InsideLineStyle = Word.WdLineStyle.wdLineStyleSingle;
+            subTable.Borders.OutsideLineStyle = Word.WdLineStyle.wdLineStyleSingle;
+
+            subTable.Cell(1, 1).Range.Text = "Total Renewal Cost Option Year 1";
+            subTable.Cell(1, 2).Range.Text = "$" + String.Format("{0:n}", TOTAL);
+            subTable.Cell(1, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+            subTable.Cell(1, 2).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+
+
+            subTable.Range.ParagraphFormat.SpaceAfter = 6;
+            oDoc.Words.Last.InsertBreak(Word.WdBreakType.wdPageBreak);
+
+        }
+
+        private void rebillSubscriptionTable(Microsoft.Office.Interop.Excel.Worksheet xlWorksheet, Microsoft.Office.Interop.Word.Document oDoc, int[,] source, int s1)
+        {
+
+            object oMissing = System.Reflection.Missing.Value;
+            object oEndOfDoc = "\\endofdoc"; /* \endofdoc is a predefined bookmark */
+
+            //Subtitle 3a Stats Canada
+            Word.Paragraph oPara1;
+            oPara1 = oDoc.Content.Paragraphs.Add(ref oMissing);
+            oPara1.Range.Text = "" + xlWorksheet.get_Range("B" + source[s1, 0].ToString()).Text + xlWorksheet.get_Range("C" + source[s1, 0].ToString()).Text + ". " + xlWorksheet.get_Range("E" + source[s1, 0].ToString()).Text; //Credit invoice number from amendment xx;
+            oPara1.Range.Paragraphs.TabIndent(-1);
+            oPara1.Range.Font.Bold = 1;
+            oPara1.Format.SpaceAfter = 8;    //24 pt spacing after paragraph.
+            oPara1.Range.InsertParagraphAfter();
+
+            //DEPARTMENT NAME: "ins dept"
+            Word.Paragraph oParad;
+            oParad = oDoc.Content.Paragraphs.Add(ref oMissing);
+            oParad.Range.Text = "DEPARTMENT NAME: " + xlWorksheet.get_Range("E" + source[s1, 0].ToString()).Text; //"3d Health Canada";
+            oParad.Range.Paragraphs.TabIndent(-1);
+            oParad.Range.Font.Bold = 1;
+            oParad.Format.SpaceAfter = 8;    //24 pt spacing after paragraph.
+            oParad.Range.InsertParagraphAfter();
+
+            //Insert the following schedule xx at ppendix xx, schedule xx
+            Word.Paragraph oPara2;
+            object oRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            oPara2 = oDoc.Content.Paragraphs.Add(ref oRng);
+            oPara2.Range.Text = "Insert the Following Schedule " + xlWorksheet.get_Range("G" + source[s1, 0].ToString()).Text + " at Appendix " + xlWorksheet.get_Range("I" + source[s1, 0].ToString()).Text + ", Schedule " + xlWorksheet.get_Range("G" + source[s1, 0].ToString()).Text;// + " - Part 2";
+            oPara2.Range.HighlightColorIndex = Word.WdColorIndex.wdNoHighlight;
+            oPara2.Range.Font.Bold = 0;
+            oPara2.Format.SpaceAfter = 8;
+            oPara2.Range.InsertParagraphAfter();
+
+            //Schedule xx - Server&Clound Enrollment or Enterprise Enrollment
+            if (xlWorksheet.get_Range("G" + source[s1, 0].ToString()).Text == "3")
+            {
+                Word.Paragraph oPara3;
+                oRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+                oPara3 = oDoc.Content.Paragraphs.Add(ref oRng);
+                oPara3.Range.Text = "Schedule " + xlWorksheet.get_Range("G" + source[s1, 0].ToString()).Text + " - Enterprise Enrollment " + xlWorksheet.get_Range("F" + source[s1, 0].ToString()).Text;
+                oPara2.Range.Font.Bold = 1;
+                oPara3.Format.SpaceAfter = 6;
+                oPara3.Range.InsertParagraphAfter();
+            }
+
+            if (xlWorksheet.get_Range("G" + source[s1, 0].ToString()).Text == "4")
+            {
+                Word.Paragraph oPara3;
+                oRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+                oPara3 = oDoc.Content.Paragraphs.Add(ref oRng);
+                oPara3.Range.Text = "Schedule " + xlWorksheet.get_Range("G" + source[s1, 0].ToString()).Text + " - Server and Cloud Enrollment " + xlWorksheet.get_Range("F" + source[s1, 0].ToString()).Text;
+                oPara2.Range.Font.Bold = 1;
+                oPara3.Format.SpaceAfter = 6;
+                oPara3.Range.InsertParagraphAfter();
+            }
+
+            //The table 
+            Word.Table orderTable;
+            Word.Range hdrng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            orderTable = oDoc.Tables.Add(hdrng, 6 + source[s1, 1], 10, ref oMissing, ref oMissing);
+            orderTable.Borders.InsideLineStyle = Word.WdLineStyle.wdLineStyleSingle;
+            orderTable.Borders.OutsideLineStyle = Word.WdLineStyle.wdLineStyleSingle;
+            orderTable.Range.ParagraphFormat.SpaceAfter = 0;
+
+            //Set column widths
+            orderTable.Columns[1].Width = 80;
+            orderTable.Columns[2].Width = 47;
+            orderTable.Columns[3].Width = 47;
+            orderTable.Columns[4].Width = 47;
+            orderTable.Columns[5].Width = 41;
+            orderTable.Columns[6].Width = 41;
+            orderTable.Columns[7].Width = 43;
+            orderTable.Columns[8].Width = 41;
+            orderTable.Columns[9].Width = 39;
+            orderTable.Columns[10].Width = 53;
+
+            // Table Contents
+            orderTable.Cell(1, 1).Range.Text = "Pricing & Usage Year 4, PO: RAS# " + xlWorksheet.get_Range("M" + source[s1, 0].ToString()).Text + " YR4";
+            orderTable.Cell(2, 1).Range.Text = "Product Description";
+            orderTable.Cell(2, 2).Range.Text = "Part Number";
+            orderTable.Cell(2, 3).Range.Text = "Usage Indicator";
+            orderTable.Cell(2, 4).Range.Text = "Usage Start Date";
+            orderTable.Cell(2, 5).Range.Text = "Unit of Measure";
+            orderTable.Cell(2, 6).Range.Text = "Unit Quantity";
+            orderTable.Cell(2, 7).Range.Text = "Net Unit Price (CAD)";
+            orderTable.Cell(2, 8).Range.Text = "License Quantity";
+            orderTable.Cell(2, 9).Range.Text = "Usage Country";
+            orderTable.Cell(2, 10).Range.Text = "Extended Amount (CAD)";
+
+            //this loop computes the subtotal, tax, and TOTAL Year 4 Payment
+            double sub = 0.0;
+            double HST = 0.0;
+
+            for (int sift = 1; sift < (source[s1, 1] + 1); sift++)
+            {
+                string stringsub = xlWorksheet.get_Range("T" + (source[s1, 0] + sift - 1).ToString()).Text;
+                string HSTsub = xlWorksheet.get_Range("V" + (source[s1, 0] + sift - 1).ToString()).Text;
+                sub = sub + Convert.ToDouble(stringsub);
+                HST = HST + Convert.ToDouble(HSTsub);
+
+            }
+
+            double TOTAL = sub + HST;
+
+            //inputs the above caluclated values into the last 3 rows of the table accordingly
+            for (int i = 3; i < 7 + source[s1, 1]; i++)
+            {
+                if (i > 2 + source[s1, 1])
+                {
+
+                    if (i == (3 + source[s1, 1]))
+                    {
+                        orderTable.Cell(i, 1).Range.Text = "Sub Total";
+                        orderTable.Cell(i, 10).Range.Text = "$" + String.Format("{0:n}", sub);
+                        orderTable.Cell(i, 10).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+                    }
+
+                    if (i == (4 + source[s1, 1]))
+                    {
+                        orderTable.Cell(i, 1).Range.Text = "Tax Based on original enrollment ship to " + "(" + xlWorksheet.get_Range("U" + (-1 + source[s1, 0] + source[s1, 1]).ToString()).Text + ")";
+                        orderTable.Cell(i, 10).Range.Text = "$" + String.Format("{0:n}", HST);
+                        orderTable.Cell(i, 10).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+                    }
+
+                    if (i == (5 + source[s1, 1]))
+                    {
+                        orderTable.Cell(i, 1).Range.Text = "TOTAL Year 4 Payment";
+                        orderTable.Cell(i, 10).Range.Text = "$" + String.Format("{0:n}", TOTAL);
+                        orderTable.Cell(i, 10).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+                    }
+                    if (i == (6 + source[s1, 1]))
+                    {
+                        orderTable.Cell(i, 1).Range.Text = "Invoice Date: 4th Anniversary Date";
+                        orderTable.Cell(i, 10).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+                    }
+
+
+                }
+
+                else
+                {
+                    orderTable.Cell(i, 1).Range.Text = xlWorksheet.get_Range("N" + (source[s1, 0] + (i - 3)).ToString()).Text; //product description
+                    orderTable.Cell(i, 2).Range.Text = xlWorksheet.get_Range("O" + (source[s1, 0] + (i - 3)).ToString()).Text; //part number
+                    orderTable.Cell(i, 3).Range.Text = xlWorksheet.get_Range("K" + (source[s1, 0] + (i - 3)).ToString()).Text; //Usage Indicator
+                    orderTable.Cell(i, 4).Range.Text = xlWorksheet.get_Range("J" + (source[s1, 0] + (i - 3)).ToString()).Text; //Usage Start Date
+                    orderTable.Cell(i, 5).Range.Text = xlWorksheet.get_Range("L" + (source[s1, 0] + (i - 3)).ToString()).Text; //Unit of Measure
+                    orderTable.Cell(i, 6).Range.Text = xlWorksheet.get_Range("P" + (source[s1, 0] + (i - 3)).ToString()).Text; //Unit Quantity
+                    orderTable.Cell(i, 7).Range.Text = "$" + String.Format("{0:n}", Convert.ToDouble(xlWorksheet.get_Range("Q" + (source[s1, 0] + (i - 3)).ToString()).Text)); //net unit price
+                    orderTable.Cell(i, 8).Range.Text = xlWorksheet.get_Range("R" + (source[s1, 0] + (i - 3)).ToString()).Text; //License Quantity
+                    orderTable.Cell(i, 9).Range.Text = xlWorksheet.get_Range("S" + (source[s1, 0] + (i - 3)).ToString()).Text; //Usage Country
+                    orderTable.Cell(i, 10).Range.Text = "$" + String.Format("{0:n}", Convert.ToDouble(xlWorksheet.get_Range("T" + (source[s1, 0] + (i - 3)).ToString()).Text)); //Extended Amount
+
+                    orderTable.Rows[i].Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+                }
+
+
+            }
+
+            orderTable.Rows[2].Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+
+            //Merge the cells we want to merge
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Rows[1].Cells[1].Merge(orderTable.Rows[1].Cells[2]);
+            orderTable.Cell(1, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+
+            orderTable.Rows[2].Range.Font.Size = 8;
+
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 3].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 3].Cells[2]);
+            orderTable.Cell(source[s1, 1] + 3, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 4].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 4].Cells[2]);
+            orderTable.Cell(source[s1, 1] + 4, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 5].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 5].Cells[2]);
+            orderTable.Cell(source[s1, 1] + 5, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+            orderTable.Rows[(source[s1, 1] + 5)].Range.Font.Size = 9;
+
+            orderTable.Rows[source[s1, 1] + 6].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 6].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 6].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 6].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 6].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 6].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 6].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 6].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 6].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 6].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 6].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 6].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 6].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 6].Cells[2]);
+            orderTable.Rows[source[s1, 1] + 6].Cells[1].Merge(orderTable.Rows[source[s1, 1] + 6].Cells[2]);
+            orderTable.Cell(source[s1, 1] + 6, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+            orderTable.Rows[(source[s1, 1] + 6)].Range.Font.Size = 9;
+
+            for (int r = 3; r < 6 + source[s1, 1]; r++)
+            {
+                orderTable.Rows[r].Range.Font.Bold = 0;
+
+                if (r < source[s1, 1] + 3)
+                {
+                    orderTable.Rows[r].Range.Font.Size = 8;
+                }
+                else
+                {
+                    orderTable.Rows[r].Range.Font.Size = 9;
+                }
+            }
+
+            //Insert another paragraph.
+            Word.Paragraph oPara4;
+            oRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            oPara4 = oDoc.Content.Paragraphs.Add(ref oRng);
+            oPara4.Range.Text = "";
+            oPara4.Range.Font.Bold = 1;
+            oPara4.Format.SpaceAfter = 0;
+            oPara4.Range.InsertParagraphAfter();
+
+            //Subtotal part
+            Word.Table subTable;
+            Word.Range sbdRng = oDoc.Bookmarks.get_Item(ref oEndOfDoc).Range;
+            subTable = oDoc.Tables.Add(sbdRng, 1, 2, ref oMissing, ref oMissing);
+            subTable.Columns[1].Width = 426;
+            subTable.Columns[2].Width = 53;
+            subTable.Borders.InsideLineStyle = Word.WdLineStyle.wdLineStyleSingle;
+            subTable.Borders.OutsideLineStyle = Word.WdLineStyle.wdLineStyleSingle;
+
+            subTable.Cell(1, 1).Range.Text = "Total Renewal Cost Option Year 1";
+            subTable.Cell(1, 2).Range.Text = "$" + String.Format("{0:n}", TOTAL);
+            subTable.Rows[1].Range.Font.Size = 9;
+            subTable.Cell(1, 1).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+            subTable.Cell(1, 2).Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphRight;
+            subTable.Range.ParagraphFormat.SpaceAfter = 6;
+            oDoc.Words.Last.InsertBreak(Word.WdBreakType.wdPageBreak);
+
+        }
+
+
+    }
+}
